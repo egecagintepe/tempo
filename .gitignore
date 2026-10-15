@@ -1,0 +1,74 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+*.tmp
+*.zip
+
+# IntelliJ / Android Studio related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code
+.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Android Studio / Gradle artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+.gradle/
+android/.gradle/
+android/app/build/
+android/local.properties
+
+# Android Keystores & Signing Secrets
+*.keystore
+*.jks
+android/key.properties
+key.properties
+
+# Privacy & Dual Distribution Guard
+.local/
+*.personal.json
+personal_profile.json
+assets/generated/
+*.apk
+*-Personal-*.apk
+*-personal-*.apk
+tempo-personal.apk
+
+# Local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+backup_*.json
+exports/
+
+# AI Studio artifacts
+.aistudio/
+metadata.json
+
+# Widget Preview related
+.widget_preview/

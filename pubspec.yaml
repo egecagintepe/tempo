@@ -1,0 +1,47 @@
+name: tempo
+description: "TEMPO — Personal Time Budget OS. Own your hours."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  
+  # State Management
+  flutter_riverpod: ^2.5.1
+  
+  # Local SQLite Persistence
+  sqflite: ^2.3.3+1
+  path_provider: ^2.1.2
+  path: ^1.9.0
+  
+  # Local Notifications & Timezone
+  flutter_local_notifications: ^17.1.0
+  timezone: ^0.9.2
+  
+  # UI & Helpers
+  intl: ^0.20.2
+  uuid: ^4.3.3
+  fl_chart: ^0.66.2
+  google_fonts: ^6.2.1
+  lucide_icons: ^0.257.0
+  share_plus: ^10.0.0
+  file_picker: ^8.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  sqflite_common_ffi: ^2.3.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+    - config/seeds/

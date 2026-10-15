@@ -1,0 +1,128 @@
+{
+  "edition": "public",
+  "version": 1,
+  "appTitle": "TEMPO",
+  "tagline": "Own your hours.",
+  "categories": [
+    {
+      "id": "cat-deep-work",
+      "name": "Deep Work",
+      "description": "Focused problem solving, engineering, and deep focus sessions",
+      "icon": "cpu",
+      "color": "#3B82F6",
+      "weeklyTargetMinutes": 420,
+      "policy": "flexible",
+      "priorityOrder": 1,
+      "scheduledDays": [1, 2, 3, 4, 5]
+    },
+    {
+      "id": "cat-study",
+      "name": "Study",
+      "description": "Academic coursework, lectures, and textbook study",
+      "icon": "book-open",
+      "color": "#06B6D4",
+      "weeklyTargetMinutes": 300,
+      "policy": "flexible",
+      "priorityOrder": 2,
+      "scheduledDays": [1, 3, 5]
+    },
+    {
+      "id": "cat-reading",
+      "name": "Reading",
+      "description": "Non-fiction books, technical literature, and articles",
+      "icon": "bookmark",
+      "color": "#8B5CF6",
+      "weeklyTargetMinutes": 120,
+      "policy": "flexible",
+      "priorityOrder": 3,
+      "scheduledDays": [2, 4, 6]
+    },
+    {
+      "id": "cat-language",
+      "name": "Language Learning",
+      "description": "Vocabulary flashcards, listening comprehension, and grammar",
+      "icon": "globe",
+      "color": "#6366F1",
+      "weeklyTargetMinutes": 120,
+      "policy": "flexible",
+      "priorityOrder": 4,
+      "scheduledDays": [2, 4]
+    },
+    {
+      "id": "cat-fitness",
+      "name": "Fitness",
+      "description": "Workouts, cardio, and physical training",
+      "icon": "activity",
+      "color": "#10B981",
+      "weeklyTargetMinutes": 180,
+      "policy": "flexible",
+      "priorityOrder": 5,
+      "scheduledDays": [1, 3, 5, 6]
+    },
+    {
+      "id": "cat-projects",
+      "name": "Personal Projects",
+      "description": "Open source tools, software experiments, and side builds",
+      "icon": "terminal",
+      "color": "#14B8A6",
+      "weeklyTargetMinutes": 150,
+      "policy": "strict",
+      "priorityOrder": 6,
+      "scheduledDays": [6]
+    },
+    {
+      "id": "cat-writing",
+      "name": "Creative Writing",
+      "description": "Protected creative writing time: cannot be spent elsewhere",
+      "icon": "pen-tool",
+      "color": "#F59E0B",
+      "weeklyTargetMinutes": 90,
+      "policy": "protected",
+      "priorityOrder": 7,
+      "scheduledDays": [7]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t-deep-1",
+      "categoryId": "cat-deep-work",
+      "title": "Core algorithm implementation",
+      "estimatedMinutes": 60,
+      "priority": "high",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "t-study-1",
+      "categoryId": "cat-study",
+      "title": "Review chapter notes and solve exercises",
+      "estimatedMinutes": 45,
+      "priority": "medium",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "t-reading-1",
+      "categoryId": "cat-reading",
+      "title": "Read chapter 3 & highlight key principles",
+      "estimatedMinutes": 30,
+      "priority": "low",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "t-lang-1",
+      "categoryId": "cat-language",
+      "title": "Daily vocabulary cards & listening drill",
+      "estimatedMinutes": 30,
+      "priority": "medium",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "t-writing-1",
+      "categoryId": "cat-writing",
+      "title": "Draft scene outline for next chapter",
+      "estimatedMinutes": 45,
+      "priority": "high",
+      "recurrence": "weekly"
+    }
+  ],
+  "calendarEvents": []
+}
