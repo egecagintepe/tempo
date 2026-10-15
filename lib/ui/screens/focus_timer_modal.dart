@@ -7,9 +7,16 @@ import '../../providers/tempo_providers.dart';
 import '../widgets/icon_mapper.dart';
 
 class FocusTimerModal extends ConsumerStatefulWidget {
-  final CategoryModel category;
+  final CategoryModel? category;
+  final String? preselectedCategoryId;
+  final String? preselectedTaskId;
 
-  const FocusTimerModal({super.key, required this.category});
+  const FocusTimerModal({
+    super.key,
+    this.category,
+    this.preselectedCategoryId,
+    this.preselectedTaskId,
+  });
 
   @override
   ConsumerState<FocusTimerModal> createState() => _FocusTimerModalState();
@@ -17,6 +24,13 @@ class FocusTimerModal extends ConsumerStatefulWidget {
 
 class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
   final TextEditingController _noteController = TextEditingController();
+  String? _selectedCategoryId;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedCategoryId = widget.category?.id ?? widget.preselectedCategoryId;
+  }
 
   @override
   void dispose() {
@@ -95,8 +109,37 @@ class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
   @override
   Widget build(BuildContext context) {
     final active = ref.watch(activeSessionNotifierProvider);
+    final categories = ref.watch(categoriesNotifierProvider);
+
+    if (_selectedCategoryId == null || !categories.any((c) => c.id == _selectedCategoryId)) {
+      if (active.isActive && active.categoryId != null) {
+        _selectedCategoryId = active.categoryId;
+      } else if (categories.isNotEmpty) {
+        _selectedCategoryId = categories.first.id;
+      }
+    }
+
+    final category = categories.firstWhere(
+      (c) => c.id == _selectedCategoryId,
+      orElse: () => widget.category ?? (categories.isNotEmpty
+          ? categories.first
+          : CategoryModel(
+              id: 'default',
+              name: 'Genel',
+              description: '',
+              icon: 'zap',
+              colorValue: 0xFF2563EB,
+              weeklyTargetMinutes: 60,
+              policy: BudgetPolicy.flexible,
+              isArchived: false,
+              priorityOrder: 0,
+              createdAt: DateTime.now(),
+              updatedAt: DateTime.now(),
+            )),
+    );
+
     final totalsMap = ref.watch(categoryTotalsMapProvider);
-    final totals = totalsMap[widget.category.id];
+    final totals = totalsMap[category.id];
 
     final isRunning = active.state == SessionState.running;
     final isBreak = active.state == SessionState.onBreak;
@@ -113,44 +156,76 @@ class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
           icon: const Icon(Icons.keyboard_arrow_down, size: 30),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Column(
-          children: [
-            Text(
-              widget.category.name,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: widget.category.color.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    widget.category.policy.name.toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
-                      color: widget.category.color,
-                    ),
-                  ),
-                ),
-                if (totals != null) ...[
-                  const SizedBox(width: 6),
+        title: active.isActive
+            ? Column(
+                children: [
                   Text(
-                    'Kalan: ${FlutterTimeEngine.formatMinutes(totals.remainingMinutes)}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: totals.isOverBudget ? const Color(0xFFF43F5E) : Colors.grey,
-                    ),
+                    category.name,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: category.color.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          category.policy.name.toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: category.color,
+                          ),
+                        ),
+                      ),
+                      if (totals != null) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          'Kalan: ${FlutterTimeEngine.formatMinutes(totals.remainingMinutes)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: totals.isOverBudget ? const Color(0xFFF43F5E) : Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
-              ],
-            ),
-          ],
-        ),
+              )
+            : PopupMenuButton<String>(
+                initialValue: category.id,
+                tooltip: 'Kategori Seç',
+                onSelected: (id) => setState(() => _selectedCategoryId = id),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      category.name,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const Icon(Icons.arrow_drop_down),
+                  ],
+                ),
+                itemBuilder: (_) => categories
+                    .map((c) => PopupMenuItem(
+                          value: c.id,
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(color: c.color, shape: BoxShape.circle),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(c.name),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
         centerTitle: true,
         actions: [
           IconButton(
@@ -201,16 +276,16 @@ class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
                   shape: BoxShape.circle,
                   color: isBreak
                       ? const Color(0xFFF59E0B).withOpacity(0.06)
-                      : widget.category.color.withOpacity(0.06),
+                      : category.color.withOpacity(0.06),
                   border: Border.all(
                     color: isBreak
                         ? const Color(0xFFF59E0B).withOpacity(0.4)
-                        : widget.category.color.withOpacity(0.4),
+                        : category.color.withOpacity(0.4),
                     width: 3,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: (isBreak ? const Color(0xFFF59E0B) : widget.category.color)
+                      color: (isBreak ? const Color(0xFFF59E0B) : category.color)
                           .withOpacity(0.12),
                       blurRadius: 36,
                       spreadRadius: 4,
@@ -222,9 +297,9 @@ class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        isBreak ? Icons.coffee : IconMapper.getIcon(widget.category.icon),
+                        isBreak ? Icons.coffee : IconMapper.getIcon(category.icon),
                         size: 32,
-                        color: isBreak ? const Color(0xFFF59E0B) : widget.category.color,
+                        color: isBreak ? const Color(0xFFF59E0B) : category.color,
                       ),
                       const SizedBox(height: 12),
                       Text(
@@ -286,13 +361,14 @@ class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
                   height: 56,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: widget.category.color,
+                      backgroundColor: category.color,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                     ),
                     onPressed: () async {
                       final res = await ref.read(activeSessionNotifierProvider.notifier).startSession(
-                        categoryId: widget.category.id,
+                        categoryId: category.id,
+                        taskId: widget.preselectedTaskId,
                       );
                       if (!res.isAllowed && context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -322,7 +398,7 @@ class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
                         height: 54,
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
-                            side: BorderSide(color: widget.category.color.withOpacity(0.5)),
+                            side: BorderSide(color: category.color.withOpacity(0.5)),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                           ),
                           onPressed: () {

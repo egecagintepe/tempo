@@ -14,13 +14,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     // Verify brand title is visible
-    expect(find.text('TEMPO.'), findsOneWidget);
-    expect(find.text('OS'), findsOneWidget);
+    expect(find.text('TEMPO'), findsOneWidget);
+    expect(find.text('2.0'), findsOneWidget);
 
-    // Verify main navigation destinations
-    expect(find.text('Bugün'), findsOneWidget);
-    expect(find.text('Bütçeler'), findsOneWidget);
-    expect(find.text('Havuz'), findsOneWidget);
-    expect(find.text('Analiz'), findsOneWidget);
+    // Verify TEMPO 2.0 main navigation destinations
+    expect(find.text('Bugün'), findsWidgets);
+    expect(find.text('Görevler'), findsWidgets);
+    expect(find.text('Takvim'), findsWidgets);
+    expect(find.text('Havuz'), findsWidgets);
+    expect(find.text('İlerleme'), findsWidgets);
   });
 }

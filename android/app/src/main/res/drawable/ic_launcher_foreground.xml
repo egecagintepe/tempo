@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Primary Upper/Left Budget Flow Arc (Electric Blue #2563EB) -->
+    <path
+        android:strokeColor="#2563EB"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M 32,71 A 26,26 0 1,1 76,37" />
+
+    <!-- Protected Free Time Pool Arc (Cyan #06B6D4) -->
+    <path
+        android:strokeColor="#06B6D4"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M 79,48 A 26,26 0 0,1 46,79" />
+
+    <!-- Central Monogram T - Horizontal Bar -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M 40,43 L 68,43" />
+
+    <!-- Central Monogram T - Vertical Stem -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M 54,43 L 54,67" />
+
+    <!-- Dynamic Flow Pulse Dot -->
+    <path
+        android:fillColor="#06B6D4"
+        android:pathData="M 54,39 A 2.5,2.5 0 1,0 54,44 A 2.5,2.5 0 1,0 54,39 Z" />
+
+</vector>

@@ -1,10 +1,9 @@
 name: TEMPO CI & Privacy Guard
 
+# Automatic CI runs on push/PR are disabled per user request to conserve monthly GitHub Actions quota.
+# All verification (tests, linting, privacy guard, builds) is executed locally on PC.
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   validate-and-build:

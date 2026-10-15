@@ -9,7 +9,9 @@ import 'seed_parser.dart';
 
 class TempoDatabase {
   static final TempoDatabase instance = TempoDatabase._internal();
-  TempoDatabase._internal();
+  final String _customDbName;
+  TempoDatabase._internal() : _customDbName = 'tempo_os_v1.db';
+  TempoDatabase.custom({String dbName = 'tempo_os_v1.db'}) : _customDbName = dbName;
 
   Database? _db;
   Future<void>? _seedingFuture;
@@ -22,11 +24,11 @@ class TempoDatabase {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, 'tempo_os_v1.db');
+    final path = p.join(dbPath, _customDbName);
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -49,6 +51,130 @@ class TempoDatabase {
               FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE
             );
           ''');
+        }
+
+        if (oldVersion < 3) {
+          // 1. Add columns to tasks safely
+          final taskCols = [
+            'ALTER TABLE tasks ADD COLUMN planned_date TEXT;',
+            'ALTER TABLE tasks ADD COLUMN due_date TEXT;',
+            'ALTER TABLE tasks ADD COLUMN due_time TEXT;',
+            'ALTER TABLE tasks ADD COLUMN planned_time_window TEXT;',
+            'ALTER TABLE tasks ADD COLUMN parent_task_id TEXT;',
+            'ALTER TABLE tasks ADD COLUMN course_id TEXT;',
+            'ALTER TABLE tasks ADD COLUMN task_type TEXT;',
+            'ALTER TABLE tasks ADD COLUMN notes TEXT;',
+            'ALTER TABLE tasks ADD COLUMN completed_at TEXT;',
+            'ALTER TABLE tasks ADD COLUMN deferred_count INTEGER NOT NULL DEFAULT 0;',
+            'ALTER TABLE tasks ADD COLUMN source TEXT;',
+          ];
+          for (final sql in taskCols) {
+            try { await db.execute(sql); } catch (_) {}
+          }
+
+          // 2. Add columns to calendar_events safely
+          final calCols = [
+            'ALTER TABLE calendar_events ADD COLUMN specific_date TEXT;',
+            'ALTER TABLE calendar_events ADD COLUMN is_tentative INTEGER NOT NULL DEFAULT 0;',
+            'ALTER TABLE calendar_events ADD COLUMN is_completed INTEGER NOT NULL DEFAULT 0;',
+            'ALTER TABLE calendar_events ADD COLUMN is_rest INTEGER NOT NULL DEFAULT 0;',
+            'ALTER TABLE calendar_events ADD COLUMN recurrence TEXT NOT NULL DEFAULT \'weekly\';',
+            'ALTER TABLE calendar_events ADD COLUMN location TEXT;',
+            'ALTER TABLE calendar_events ADD COLUMN notes TEXT;',
+          ];
+          for (final sql in calCols) {
+            try { await db.execute(sql); } catch (_) {}
+          }
+
+          // 3. Add column to settings
+          try {
+            await db.execute("ALTER TABLE settings ADD COLUMN current_term_mode TEXT NOT NULL DEFAULT 'modeAMidtermPrep';");
+          } catch (_) {}
+
+          // 4. Create subtasks table if not exists
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS subtasks (
+              id TEXT PRIMARY KEY,
+              task_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              is_completed INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+            );
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);');
+
+          // 5. Create course_topics table if not exists
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS course_topics (
+              id TEXT PRIMARY KEY,
+              course_id TEXT NOT NULL,
+              week_number INTEGER NOT NULL,
+              title TEXT NOT NULL,
+              description TEXT,
+              mastery_level TEXT NOT NULL DEFAULT 'notStarted',
+              questions_attempted INTEGER NOT NULL DEFAULT 0,
+              questions_correct INTEGER NOT NULL DEFAULT 0,
+              notes TEXT,
+              last_practiced_at TEXT,
+              updated_at TEXT
+            );
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_course_topics_course ON course_topics(course_id);');
+          try { await db.execute('ALTER TABLE course_topics ADD COLUMN updated_at TEXT;'); } catch (_) {}
+
+          // 6. Create leisure_items table if not exists
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS leisure_items (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              type TEXT NOT NULL DEFAULT 'game',
+              status TEXT NOT NULL DEFAULT 'backlog',
+              note TEXT,
+              rating INTEGER
+            );
+          ''');
+
+          // 7. Non-destructive migration of cat-c-siber to cat-c and cat-siber
+          try {
+            final oldCat = await db.query('categories', where: 'id = ?', whereArgs: ['cat-c-siber']);
+            if (oldCat.isNotEmpty) {
+              final now = DateTime.now().toIso8601String();
+              await db.insert('categories', {
+                'id': 'cat-c',
+                'name': 'C Programming',
+                'description': 'C Programming & Interdisciplinary Project',
+                'icon': 'code',
+                'color_value': 4280656875,
+                'weekly_target_minutes': 120,
+                'policy': 'flexible',
+                'is_archived': 0,
+                'priority_order': 3,
+                'created_at': now,
+                'updated_at': now,
+              }, conflictAlgorithm: ConflictAlgorithm.ignore);
+
+              await db.insert('categories', {
+                'id': 'cat-siber',
+                'name': 'Cybersecurity',
+                'description': 'CENG445 Cybersecurity syllabus & labs',
+                'icon': 'shield',
+                'color_value': 4288679541,
+                'weekly_target_minutes': 60,
+                'policy': 'flexible',
+                'is_archived': 0,
+                'priority_order': 4,
+                'created_at': now,
+                'updated_at': now,
+              }, conflictAlgorithm: ConflictAlgorithm.ignore);
+
+              // Archive cat-c-siber to preserve session history
+              await db.update('categories', {'is_archived': 1}, where: 'id = ?', whereArgs: ['cat-c-siber']);
+
+              // Reassign tasks if any
+              await db.rawUpdate("UPDATE tasks SET category_id = 'cat-siber' WHERE category_id = 'cat-c-siber' AND (LOWER(title) LIKE '%siber%' OR LOWER(title) LIKE '%cyber%');");
+              await db.rawUpdate("UPDATE tasks SET category_id = 'cat-c' WHERE category_id = 'cat-c-siber';");
+            }
+          } catch (_) {}
         }
       },
       onConfigure: (db) async {
@@ -114,6 +240,17 @@ class TempoDatabase {
         deadline TEXT,
         week_period_id TEXT NOT NULL,
         recurrence TEXT NOT NULL DEFAULT 'weekly',
+        planned_date TEXT,
+        due_date TEXT,
+        due_time TEXT,
+        planned_time_window TEXT,
+        parent_task_id TEXT,
+        course_id TEXT,
+        task_type TEXT,
+        notes TEXT,
+        completed_at TEXT,
+        deferred_count INTEGER NOT NULL DEFAULT 0,
+        source TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE
@@ -121,6 +258,17 @@ class TempoDatabase {
     ''');
     await db.execute('CREATE INDEX idx_tasks_category ON tasks(category_id);');
     await db.execute('CREATE INDEX idx_tasks_week ON tasks(week_period_id);');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS subtasks (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        is_completed INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+      );
+    ''');
+    await db.execute('CREATE INDEX idx_subtasks_task ON subtasks(task_id);');
 
     await db.execute('''
       CREATE TABLE task_occurrences (
@@ -204,6 +352,13 @@ class TempoDatabase {
         end_time TEXT NOT NULL,
         type TEXT NOT NULL DEFAULT 'study_block',
         category_id TEXT,
+        specific_date TEXT,
+        is_tentative INTEGER NOT NULL DEFAULT 0,
+        is_completed INTEGER NOT NULL DEFAULT 0,
+        is_rest INTEGER NOT NULL DEFAULT 0,
+        recurrence TEXT NOT NULL DEFAULT 'weekly',
+        location TEXT,
+        notes TEXT,
         FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE SET NULL
       );
     ''');
@@ -214,6 +369,34 @@ class TempoDatabase {
         title TEXT NOT NULL,
         start_date TEXT NOT NULL,
         end_date TEXT NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE course_topics (
+        id TEXT PRIMARY KEY,
+        course_id TEXT NOT NULL,
+        week_number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        mastery_level TEXT NOT NULL DEFAULT 'notStarted',
+        questions_attempted INTEGER NOT NULL DEFAULT 0,
+        questions_correct INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        last_practiced_at TEXT,
+        updated_at TEXT
+      );
+    ''');
+    await db.execute('CREATE INDEX idx_course_topics_course ON course_topics(course_id);');
+
+    await db.execute('''
+      CREATE TABLE leisure_items (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'game',
+        status TEXT NOT NULL DEFAULT 'backlog',
+        note TEXT,
+        rating INTEGER
       );
     ''');
 
@@ -241,7 +424,8 @@ class TempoDatabase {
         week_start_day INTEGER NOT NULL DEFAULT 1,
         auto_week_reset INTEGER NOT NULL DEFAULT 1,
         language TEXT NOT NULL DEFAULT 'tr',
-        seed_version INTEGER NOT NULL DEFAULT 0
+        seed_version INTEGER NOT NULL DEFAULT 0,
+        current_term_mode TEXT NOT NULL DEFAULT 'modeAMidtermPrep'
       );
     ''');
 
@@ -259,6 +443,7 @@ class TempoDatabase {
       'auto_week_reset': 1,
       'language': 'tr',
       'seed_version': 0,
+      'current_term_mode': 'modeAMidtermPrep',
     });
 
     await db.execute('''
@@ -378,7 +563,7 @@ class TempoDatabase {
         );
       }
 
-      // 2. Tasks
+      // 2. Tasks & Subtasks
       for (final task in result.tasks) {
         final taskToInsert = task.weekPeriodId.isEmpty
             ? task.copyWith(weekPeriodId: currentWeekId)
@@ -388,6 +573,16 @@ class TempoDatabase {
           taskToInsert.toMap(),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+
+        for (final subtask in taskToInsert.subtasks) {
+          final sMap = subtask.toMap();
+          sMap['task_id'] = taskToInsert.id;
+          await txn.insert(
+            'subtasks',
+            sMap,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
       }
 
       // 3. Calendar Events
@@ -408,7 +603,25 @@ class TempoDatabase {
         );
       }
 
-      // 5. Ensure weekly_periods record exists
+      // 5. Course Topics
+      for (final topic in result.courseTopics) {
+        await txn.insert(
+          'course_topics',
+          topic.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // 6. Leisure Items
+      for (final item in result.leisureItems) {
+        await txn.insert(
+          'leisure_items',
+          item.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // 7. Ensure weekly_periods record exists
       final pRows = await txn.query('weekly_periods', where: 'id = ?', whereArgs: [currentWeekId]);
       if (pRows.isEmpty) {
         final weekInfo = FlutterTimeEngine.getWeekPeriod();
@@ -420,7 +633,7 @@ class TempoDatabase {
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
 
-      // 6. Ensure weekly_budgets for all active categories with their full weekly target minutes
+      // 8. Ensure weekly_budgets for all active categories with their full weekly target minutes
       for (final cat in result.categories) {
         final bRows = await txn.query(
           'weekly_budgets',
@@ -441,7 +654,7 @@ class TempoDatabase {
         }
       }
 
-      // 7. Update seed version in settings
+      // 9. Update seed version in settings
       await txn.update(
         'settings',
         {'seed_version': result.version},
@@ -478,6 +691,8 @@ class TempoDatabase {
     int tasksAdded = 0;
     int eventsAdded = 0;
     int milestonesAdded = 0;
+    int topicsAdded = 0;
+    int leisureAdded = 0;
     int budgetsEnsured = 0;
     bool cleanedFallback = false;
 
@@ -518,7 +733,7 @@ class TempoDatabase {
         }
       }
 
-      // 2. Tasks (Insert missing tasks)
+      // 2. Tasks & Subtasks (Insert missing tasks)
       for (final task in result.tasks) {
         final taskToInsert = task.weekPeriodId.isEmpty
             ? task.copyWith(weekPeriodId: currentWeekId)
@@ -527,6 +742,12 @@ class TempoDatabase {
         if (existing.isEmpty) {
           await txn.insert('tasks', taskToInsert.toMap());
           tasksAdded++;
+
+          for (final subtask in taskToInsert.subtasks) {
+            final sMap = subtask.toMap();
+            sMap['task_id'] = taskToInsert.id;
+            await txn.insert('subtasks', sMap, conflictAlgorithm: ConflictAlgorithm.replace);
+          }
         }
       }
 
@@ -548,7 +769,25 @@ class TempoDatabase {
         }
       }
 
-      // 5. Ensure weekly_periods record exists
+      // 5. Course Topics (Insert missing course topics)
+      for (final topic in result.courseTopics) {
+        final existing = await txn.query('course_topics', where: 'id = ?', whereArgs: [topic.id]);
+        if (existing.isEmpty) {
+          await txn.insert('course_topics', topic.toMap());
+          topicsAdded++;
+        }
+      }
+
+      // 6. Leisure Items (Insert missing leisure items)
+      for (final item in result.leisureItems) {
+        final existing = await txn.query('leisure_items', where: 'id = ?', whereArgs: [item.id]);
+        if (existing.isEmpty) {
+          await txn.insert('leisure_items', item.toMap());
+          leisureAdded++;
+        }
+      }
+
+      // 7. Ensure weekly_periods record exists
       final pRows = await txn.query('weekly_periods', where: 'id = ?', whereArgs: [currentWeekId]);
       if (pRows.isEmpty) {
         final weekInfo = FlutterTimeEngine.getWeekPeriod();
@@ -560,7 +799,7 @@ class TempoDatabase {
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
 
-      // 6. Ensure weekly_budgets for all active categories
+      // 8. Ensure weekly_budgets for all active categories
       final allCats = await txn.query('categories', where: 'is_archived = 0');
       for (final catRow in allCats) {
         final catId = catRow['id'] as String;
@@ -585,7 +824,7 @@ class TempoDatabase {
         }
       }
 
-      // 7. Update seed version
+      // 9. Update seed version
       await txn.update(
         'settings',
         {'seed_version': result.version},
@@ -594,14 +833,16 @@ class TempoDatabase {
       );
     });
 
-    final msg = 'Onarım tamamlandı: $catsAdded kategori eklendi, $tasksAdded görev eklendi, '
-        '$eventsAdded takvim etkinliği, $milestonesAdded akademik tarih yüklendi, $budgetsEnsured bütçe oluşturuldu.';
+    final msg = 'Onarım tamamlandı: $catsAdded kategori, $tasksAdded görev, '
+        '$eventsAdded takvim, $milestonesAdded dönüm noktası, $topicsAdded konu, $leisureAdded eğlence eklendi.';
     return SeedRepairReport(
       categoriesAdded: catsAdded,
       tasksAdded: tasksAdded,
       eventsAdded: eventsAdded,
       milestonesAdded: milestonesAdded,
       budgetsEnsured: budgetsEnsured,
+      courseTopicsAdded: topicsAdded,
+      leisureItemsAdded: leisureAdded,
       cleanedFallback: cleanedFallback,
       message: msg,
     );
@@ -782,17 +1023,293 @@ class TempoDatabase {
 
   Future<void> insertTask(TaskModel task) async {
     final db = await database;
-    await db.insert('tasks', task.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.transaction((txn) async {
+      await txn.insert('tasks', task.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+      for (final subtask in task.subtasks) {
+        final sMap = subtask.toMap();
+        sMap['task_id'] = task.id;
+        await txn.insert('subtasks', sMap, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
   }
 
   Future<void> updateTask(TaskModel task) async {
     final db = await database;
-    await db.update('tasks', task.toMap(), where: 'id = ?', whereArgs: [task.id]);
+    await db.transaction((txn) async {
+      await txn.update('tasks', task.toMap(), where: 'id = ?', whereArgs: [task.id]);
+      if (task.subtasks.isNotEmpty) {
+        await txn.delete('subtasks', where: 'task_id = ?', whereArgs: [task.id]);
+        for (final subtask in task.subtasks) {
+          final sMap = subtask.toMap();
+          sMap['task_id'] = task.id;
+          await txn.insert('subtasks', sMap, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
+    });
   }
 
   Future<void> deleteTask(String taskId) async {
     final db = await database;
     await db.delete('tasks', where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<List<TaskModel>> getAllTasks({String? weekPeriodId}) async {
+    final db = await database;
+    final where = weekPeriodId != null ? 'week_period_id = ?' : null;
+    final whereArgs = weekPeriodId != null ? [weekPeriodId] : null;
+    final rows = await db.query('tasks', where: where, whereArgs: whereArgs, orderBy: 'created_at ASC');
+    
+    final tasks = <TaskModel>[];
+    for (final r in rows) {
+      final task = TaskModel.fromMap(r);
+      final subRows = await db.query('subtasks', where: 'task_id = ?', whereArgs: [task.id]);
+      final subtasks = subRows.map((s) => SubTaskModel.fromMap(s)).toList();
+      tasks.add(task.copyWith(subtasks: subtasks));
+    }
+    return tasks;
+  }
+
+  Future<List<TaskModel>> getTasksForDate(String dateStr) async {
+    final db = await database;
+    final rows = await db.query(
+      'tasks',
+      where: 'planned_date = ? OR due_date = ?',
+      whereArgs: [dateStr, dateStr],
+      orderBy: 'priority DESC, created_at ASC',
+    );
+    final tasks = <TaskModel>[];
+    for (final r in rows) {
+      final task = TaskModel.fromMap(r);
+      final subRows = await db.query('subtasks', where: 'task_id = ?', whereArgs: [task.id]);
+      final subtasks = subRows.map((s) => SubTaskModel.fromMap(s)).toList();
+      tasks.add(task.copyWith(subtasks: subtasks));
+    }
+    return tasks;
+  }
+
+  Future<List<TaskModel>> getOverdueTasks(String currentDateStr) async {
+    final db = await database;
+    final rows = await db.query(
+      'tasks',
+      where: 'status != ? AND (due_date < ? OR (planned_date < ? AND due_date IS NULL))',
+      whereArgs: ['done', currentDateStr, currentDateStr],
+      orderBy: 'due_date ASC, priority DESC',
+    );
+    final tasks = <TaskModel>[];
+    for (final r in rows) {
+      final task = TaskModel.fromMap(r);
+      final subRows = await db.query('subtasks', where: 'task_id = ?', whereArgs: [task.id]);
+      final subtasks = subRows.map((s) => SubTaskModel.fromMap(s)).toList();
+      tasks.add(task.copyWith(subtasks: subtasks));
+    }
+    return tasks;
+  }
+
+  Future<void> updateTaskStatus(String taskId, TaskStatus status, {DateTime? completedAt}) async {
+    final db = await database;
+    final updateData = <String, dynamic>{
+      'status': status.name,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+    if (status == TaskStatus.done) {
+      updateData['completed_at'] = (completedAt ?? DateTime.now()).toIso8601String();
+    } else {
+      updateData['completed_at'] = null;
+    }
+    await db.update('tasks', updateData, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> deferTask(String taskId, String newPlannedDate) async {
+    final db = await database;
+    await db.rawUpdate('''
+      UPDATE tasks
+      SET planned_date = ?, deferred_count = deferred_count + 1, status = 'todo', updated_at = ?
+      WHERE id = ?
+    ''', [newPlannedDate, DateTime.now().toIso8601String(), taskId]);
+  }
+
+  // --- SUBTASKS ---
+  Future<List<SubTaskModel>> getSubtasksForTask(String taskId) async {
+    final db = await database;
+    final rows = await db.query('subtasks', where: 'task_id = ?', whereArgs: [taskId]);
+    return rows.map((r) => SubTaskModel.fromMap(r)).toList();
+  }
+
+  Future<void> insertSubtask(SubTaskModel subtask, String taskId) async {
+    final db = await database;
+    final map = subtask.toMap();
+    map['task_id'] = taskId;
+    await db.insert('subtasks', map, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updateSubtask(SubTaskModel subtask) async {
+    final db = await database;
+    await db.update('subtasks', subtask.toMap(), where: 'id = ?', whereArgs: [subtask.id]);
+  }
+
+  Future<void> deleteSubtask(String subtaskId) async {
+    final db = await database;
+    await db.delete('subtasks', where: 'id = ?', whereArgs: [subtaskId]);
+  }
+
+  // --- COURSE TOPICS ---
+  Future<List<CourseTopicModel>> getCourseTopics({String? courseId}) async {
+    final db = await database;
+    final where = courseId != null ? 'course_id = ?' : null;
+    final whereArgs = courseId != null ? [courseId] : null;
+    final rows = await db.query(
+      'course_topics',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'week_number ASC, title ASC',
+    );
+    return rows.map((r) => CourseTopicModel.fromMap(r)).toList();
+  }
+
+  Future<void> updateCourseTopic(CourseTopicModel topic) async {
+    final db = await database;
+    await db.update('course_topics', topic.toMap(), where: 'id = ?', whereArgs: [topic.id]);
+  }
+
+  Future<void> bulkInsertCourseTopics(List<CourseTopicModel> topics) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final topic in topics) {
+        await txn.insert('course_topics', topic.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  // --- LEISURE ITEMS ---
+  Future<List<LeisureItemModel>> getLeisureItems({String? type, String? status}) async {
+    final db = await database;
+    String? where;
+    List<dynamic>? whereArgs;
+    if (type != null && status != null) {
+      where = 'type = ? AND status = ?';
+      whereArgs = [type, status];
+    } else if (type != null) {
+      where = 'type = ?';
+      whereArgs = [type];
+    } else if (status != null) {
+      where = 'status = ?';
+      whereArgs = [status];
+    }
+    final rows = await db.query('leisure_items', where: where, whereArgs: whereArgs, orderBy: 'title ASC');
+    return rows.map((r) => LeisureItemModel.fromMap(r)).toList();
+  }
+
+  Future<void> insertLeisureItem(LeisureItemModel item) async {
+    final db = await database;
+    await db.insert('leisure_items', item.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updateLeisureItem(LeisureItemModel item) async {
+    final db = await database;
+    await db.update('leisure_items', item.toMap(), where: 'id = ?', whereArgs: [item.id]);
+  }
+
+  Future<void> deleteLeisureItem(String id) async {
+    final db = await database;
+    await db.delete('leisure_items', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- WEEKLY BUDGETS & TERM MODES ---
+  Future<List<WeeklyBudgetModel>> getWeeklyBudgets(String weekPeriodId) async {
+    final db = await database;
+    final rows = await db.query('weekly_budgets', where: 'week_period_id = ?', whereArgs: [weekPeriodId]);
+    return rows.map((r) => WeeklyBudgetModel.fromMap(r)).toList();
+  }
+
+  Future<void> updateWeeklyBudgetAllocatedMinutes({
+    required String categoryId,
+    required String weekPeriodId,
+    required int allocatedMinutes,
+  }) async {
+    final db = await database;
+    await db.rawUpdate('''
+      UPDATE weekly_budgets
+      SET allocated_minutes = ?
+      WHERE category_id = ? AND week_period_id = ?
+    ''', [allocatedMinutes, categoryId, weekPeriodId]);
+  }
+
+  Future<void> applyTermMode(TermModeModel mode, String weekPeriodId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.rawUpdate(
+        'UPDATE settings SET current_term_mode = ? WHERE id = ?',
+        [mode.type.name, 'app_settings'],
+      );
+
+      for (final entry in mode.categoryHours.entries) {
+        var catId = entry.key;
+        final targetMinutes = (entry.value * 60).round();
+
+        // Check if catId directly exists, or resolve alias
+        var catRows = await txn.query('categories', where: 'id = ?', whereArgs: [catId]);
+        if (catRows.isEmpty) {
+          if (catId == 'cat-media') {
+            final match = await txn.rawQuery("SELECT id FROM categories WHERE name LIKE '%Yayın%' OR name LIKE '%Anime%' OR id LIKE '%media%' LIMIT 1");
+            if (match.isNotEmpty) {
+              catId = match.first['id'] as String;
+              catRows = match;
+            }
+          } else if (catId == 'cat-dev') {
+            final match = await txn.rawQuery("SELECT id FROM categories WHERE name LIKE '%Geliştirme%' OR name LIKE '%Dev%' OR id LIKE '%dev%' LIMIT 1");
+            if (match.isNotEmpty) {
+              catId = match.first['id'] as String;
+              catRows = match;
+            }
+          }
+        }
+        if (catRows.isEmpty) continue;
+
+        await txn.rawUpdate(
+          'UPDATE categories SET weekly_target_minutes = ? WHERE id = ?',
+          [targetMinutes, catId],
+        );
+
+        final existing = await txn.query(
+          'weekly_budgets',
+          where: 'category_id = ? AND week_period_id = ?',
+          whereArgs: [catId, weekPeriodId],
+        );
+        if (existing.isNotEmpty) {
+          await txn.rawUpdate(
+            'UPDATE weekly_budgets SET allocated_minutes = ? WHERE category_id = ? AND week_period_id = ?',
+            [targetMinutes, catId, weekPeriodId],
+          );
+        } else {
+          await txn.insert('weekly_budgets', {
+            'id': '${catId}_$weekPeriodId',
+            'category_id': catId,
+            'week_period_id': weekPeriodId,
+            'allocated_minutes': targetMinutes,
+            'transferred_in_minutes': 0,
+            'transferred_out_minutes': 0,
+            'is_completed': 0,
+            'created_at': DateTime.now().toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+    });
+  }
+
+  // --- CALENDAR 2.0 EVENTS ---
+  Future<void> insertCalendarEvent(CalendarEventModel event) async {
+    final db = await database;
+    await db.insert('calendar_events', event.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updateCalendarEvent(CalendarEventModel event) async {
+    final db = await database;
+    await db.update('calendar_events', event.toMap(), where: 'id = ?', whereArgs: [event.id]);
+  }
+
+  Future<void> deleteCalendarEvent(String id) async {
+    final db = await database;
+    await db.delete('calendar_events', where: 'id = ?', whereArgs: [id]);
   }
 
   // --- SESSIONS ---
@@ -887,20 +1404,28 @@ class TempoDatabase {
     final db = await database;
     final categories = await db.query('categories');
     final tasks = await db.query('tasks');
+    final subtasks = await db.query('subtasks');
     final sessions = await db.query('sessions');
     final transactions = await db.query('pool_transactions');
     final events = await db.query('calendar_events');
+    final courseTopics = await db.query('course_topics');
+    final leisureItems = await db.query('leisure_items');
+    final weeklyBudgets = await db.query('weekly_budgets');
     final settings = await db.query('settings');
 
     final backup = {
-      'schema_version': 1,
+      'schema_version': 2,
       'app': 'TEMPO',
       'exported_at': DateTime.now().toIso8601String(),
       'categories': categories,
       'tasks': tasks,
+      'subtasks': subtasks,
       'sessions': sessions,
       'pool_transactions': transactions,
       'calendar_events': events,
+      'course_topics': courseTopics,
+      'leisure_items': leisureItems,
+      'weekly_budgets': weeklyBudgets,
       'settings': settings.isNotEmpty ? settings.first : null,
     };
 
@@ -919,10 +1444,14 @@ class TempoDatabase {
       await txn.delete('session_segments');
       await txn.delete('break_segments');
       await txn.delete('sessions');
+      await txn.delete('subtasks');
       await txn.delete('tasks');
       await txn.delete('task_occurrences');
       await txn.delete('pool_transactions');
       await txn.delete('calendar_events');
+      await txn.delete('course_topics');
+      await txn.delete('leisure_items');
+      await txn.delete('weekly_budgets');
       await txn.delete('categories');
 
       for (final cat in parsed['categories']) {
@@ -932,6 +1461,12 @@ class TempoDatabase {
       if (parsed['tasks'] is List) {
         for (final t in parsed['tasks']) {
           await txn.insert('tasks', t as Map<String, dynamic>);
+        }
+      }
+
+      if (parsed['subtasks'] is List) {
+        for (final st in parsed['subtasks']) {
+          await txn.insert('subtasks', st as Map<String, dynamic>);
         }
       }
 
@@ -950,6 +1485,24 @@ class TempoDatabase {
       if (parsed['calendar_events'] is List) {
         for (final e in parsed['calendar_events']) {
           await txn.insert('calendar_events', e as Map<String, dynamic>);
+        }
+      }
+
+      if (parsed['course_topics'] is List) {
+        for (final ct in parsed['course_topics']) {
+          await txn.insert('course_topics', ct as Map<String, dynamic>);
+        }
+      }
+
+      if (parsed['leisure_items'] is List) {
+        for (final li in parsed['leisure_items']) {
+          await txn.insert('leisure_items', li as Map<String, dynamic>);
+        }
+      }
+
+      if (parsed['weekly_budgets'] is List) {
+        for (final wb in parsed['weekly_budgets']) {
+          await txn.insert('weekly_budgets', wb as Map<String, dynamic>, conflictAlgorithm: ConflictAlgorithm.ignore);
         }
       }
 
@@ -994,10 +1547,14 @@ class TempoDatabase {
       await txn.delete('session_segments');
       await txn.delete('break_segments');
       await txn.delete('sessions');
+      await txn.delete('subtasks');
       await txn.delete('tasks');
       await txn.delete('task_occurrences');
       await txn.delete('pool_transactions');
       await txn.delete('calendar_events');
+      await txn.delete('course_topics');
+      await txn.delete('leisure_items');
+      await txn.delete('weekly_budgets');
       await txn.delete('categories');
     });
 

@@ -12,6 +12,8 @@ class SeedParseResult {
   final List<TaskModel> tasks;
   final List<CalendarEventModel> calendarEvents;
   final List<AcademicMilestoneModel> academicMilestones;
+  final List<CourseTopicModel> courseTopics;
+  final List<LeisureItemModel> leisureItems;
   final List<String> warnings;
   final List<String> validationErrors;
 
@@ -25,6 +27,8 @@ class SeedParseResult {
     required this.tasks,
     required this.calendarEvents,
     required this.academicMilestones,
+    this.courseTopics = const [],
+    this.leisureItems = const [],
     this.warnings = const [],
     this.validationErrors = const [],
   });
@@ -40,7 +44,8 @@ class SeedParseResult {
   String toString() {
     return 'SeedParseResult(edition: $edition, version: $version, categories: ${categories.length}, '
         'totalMinutes: $totalCategoryMinutes, tasks: ${tasks.length}, events: ${calendarEvents.length}, '
-        'milestones: ${academicMilestones.length}, errors: ${validationErrors.length}, warnings: ${warnings.length})';
+        'milestones: ${academicMilestones.length}, courseTopics: ${courseTopics.length}, leisureItems: ${leisureItems.length}, '
+        'errors: ${validationErrors.length}, warnings: ${warnings.length})';
   }
 }
 
@@ -51,6 +56,8 @@ class SeedRepairReport {
   final int eventsAdded;
   final int milestonesAdded;
   final int budgetsEnsured;
+  final int courseTopicsAdded;
+  final int leisureItemsAdded;
   final bool cleanedFallback;
   final String message;
 
@@ -60,6 +67,8 @@ class SeedRepairReport {
     required this.eventsAdded,
     required this.milestonesAdded,
     required this.budgetsEnsured,
+    this.courseTopicsAdded = 0,
+    this.leisureItemsAdded = 0,
     required this.cleanedFallback,
     required this.message,
   });
@@ -254,6 +263,44 @@ class SeedParser {
       }
     }
 
+    // 5. Course Topics
+    final courseTopics = <CourseTopicModel>[];
+    final rawTopics = data['courseTopics'] ?? data['course_topics'];
+    if (rawTopics is List) {
+      for (int i = 0; i < rawTopics.length; i++) {
+        final item = rawTopics[i];
+        if (item is Map) {
+          try {
+            final topic = CourseTopicModel.fromMap(Map<String, dynamic>.from(item));
+            if (topic.title.isNotEmpty) {
+              courseTopics.add(topic);
+            }
+          } catch (e) {
+            warnings.add('Failed to parse course topic at index $i: $e');
+          }
+        }
+      }
+    }
+
+    // 6. Leisure Items
+    final leisureItems = <LeisureItemModel>[];
+    final rawLeisure = data['leisureItems'] ?? data['leisure_items'];
+    if (rawLeisure is List) {
+      for (int i = 0; i < rawLeisure.length; i++) {
+        final item = rawLeisure[i];
+        if (item is Map) {
+          try {
+            final leisure = LeisureItemModel.fromMap(Map<String, dynamic>.from(item));
+            if (leisure.title.isNotEmpty) {
+              leisureItems.add(leisure);
+            }
+          } catch (e) {
+            warnings.add('Failed to parse leisure item at index $i: $e');
+          }
+        }
+      }
+    }
+
     return SeedParseResult(
       edition: edition,
       version: version,
@@ -264,6 +311,8 @@ class SeedParser {
       tasks: tasks,
       calendarEvents: calendarEvents,
       academicMilestones: milestones,
+      courseTopics: courseTopics,
+      leisureItems: leisureItems,
       warnings: warnings,
       validationErrors: validationErrors,
     );

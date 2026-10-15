@@ -15,7 +15,7 @@ class TodayTab extends ConsumerWidget {
     if (categories.isEmpty) return;
 
     final titleController = TextEditingController();
-    final minutesController = TextEditingController(text: '30');
+    final minutesController = TextEditingController(text: '45');
     String selectedCatId = categories.first.id;
 
     showDialog(
@@ -26,7 +26,7 @@ class TodayTab extends ConsumerWidget {
             return AlertDialog(
               backgroundColor: Theme.of(context).cardColor,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              title: const Text('Yeni Görev Ekle', style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text('Bugüne Görev Ekle', style: TextStyle(fontWeight: FontWeight.bold)),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -35,11 +35,11 @@ class TodayTab extends ConsumerWidget {
                     autofocus: true,
                     decoration: InputDecoration(
                       labelText: 'Görev Başlığı',
-                      hintText: 'Örn: Bölüm okuması ve not çıkarma',
+                      hintText: 'Örn: RF Noise Figure problemlerini çöz',
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
                     value: selectedCatId,
                     decoration: InputDecoration(
@@ -62,7 +62,7 @@ class TodayTab extends ConsumerWidget {
                       if (val != null) setState(() => selectedCatId = val);
                     },
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   TextField(
                     controller: minutesController,
                     keyboardType: TextInputType.number,
@@ -85,13 +85,18 @@ class TodayTab extends ConsumerWidget {
                   onPressed: () {
                     final title = titleController.text.trim();
                     if (title.isNotEmpty) {
-                      final mins = int.tryParse(minutesController.text.trim()) ?? 30;
+                      final mins = int.tryParse(minutesController.text.trim()) ?? 45;
                       final week = ref.read(currentWeekPeriodProvider);
+                      final now = DateTime.now();
+                      final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
                       final task = TaskModel(
                         id: const Uuid().v4(),
                         categoryId: selectedCatId,
                         title: title,
                         estimatedMinutes: mins,
+                        plannedDate: todayStr,
+                        dueDate: todayStr,
                         weekPeriodId: week.id,
                         createdAt: DateTime.now(),
                         updatedAt: DateTime.now(),
@@ -113,19 +118,51 @@ class TodayTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final categories = ref.watch(categoriesNotifierProvider);
-    final totalsMap = ref.watch(categoryTotalsMapProvider);
     final summary = ref.watch(weeklySummaryProvider);
-    final tasks = ref.watch(tasksNotifierProvider);
-    final calendarEventsAsync = ref.watch(calendarEventsProvider);
-    final todayWeekday = DateTime.now().weekday; // 1=Mon ... 7=Sun
+    final planning = ref.watch(planningAnalysisProvider);
+    final allTasks = ref.watch(tasksNotifierProvider);
+    final allEvents = ref.watch(calendarEventsNotifierProvider);
+
+    final now = DateTime.now();
+    final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final dayNames = ['PAZARTESİ', 'SALI', 'ÇARŞAMBA', 'PERŞEMBE', 'CUMA', 'CUMARTESİ', 'PAZAR'];
+    final monthNames = ['OCAK', 'ŞUBAT', 'MART', 'NİSAN', 'MAYIS', 'HAZİRAN', 'TEMMUZ', 'AĞUSTOS', 'EYLÜL', 'EKİM', 'KASIM', 'ARALIK'];
+    final currentDayStr = dayNames[now.weekday - 1];
+    final currentDateFormatted = '${now.day} ${monthNames[now.month - 1]} ${now.year}';
+
+    // Today's events sorted by start time
+    final todayEvents = allEvents.where((e) {
+      if (e.specificDate != null && e.specificDate == todayStr) return true;
+      return e.dayOfWeek == now.weekday;
+    }).toList()..sort((a, b) => a.startTime.compareTo(b.startTime));
+
+    // Next upcoming event
+    final currentTimeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final upcomingEvents = todayEvents.where((e) => e.startTime.compareTo(currentTimeStr) >= 0).toList();
+    final nextEvent = upcomingEvents.isNotEmpty ? upcomingEvents.first : (todayEvents.isNotEmpty ? todayEvents.last : null);
+
+    // Today's tasks (planned or due today, or fallback to first 4 active tasks)
+    final todayTasks = allTasks.where((t) {
+      if (t.status == TaskStatus.done) return false;
+      if (t.plannedDate == todayStr || t.dueDate == todayStr) return true;
+      return false;
+    }).toList();
+    final tasksToShow = todayTasks.isNotEmpty ? todayTasks : allTasks.where((t) => t.status != TaskStatus.done).take(4).toList();
+    final completedTodayCount = allTasks.where((t) => t.status == TaskStatus.done && t.completedAt != null && t.completedAt!.day == now.day).length;
+
+    // Tomorrow's first event / wake up reminder
+    final tomorrowWeekday = now.weekday == 7 ? 1 : now.weekday + 1;
+    final tomorrowEvents = allEvents.where((e) => e.dayOfWeek == tomorrowWeekday).toList()
+      ..sort((a, b) => a.startTime.compareTo(b.startTime));
+    final tomorrowFirst = tomorrowEvents.isNotEmpty ? tomorrowEvents.first : null;
+    final tomorrowWakeUp = (tomorrowWeekday == 2 || tomorrowWeekday == 4) ? '07:00 (Staj Günü)' : '08:15';
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 90),
       children: [
-        // Sticky Active Session Bar
         const ActiveSessionBar(),
 
-        // Top Weekly Budget Overview Card
+        // 1. TOP MORNING DASHBOARD BANNER
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Container(
@@ -133,14 +170,14 @@ class TodayTab extends ConsumerWidget {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
-                  const Color(0xFF2563EB).withOpacity(0.12),
-                  const Color(0xFF06B6D4).withOpacity(0.06),
+                  const Color(0xFF2563EB).withOpacity(0.18),
+                  const Color(0xFF06B6D4).withOpacity(0.08),
                 ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: const Color(0xFF2563EB).withOpacity(0.3)),
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(color: const Color(0xFF2563EB).withOpacity(0.35)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,71 +185,56 @@ class TodayTab extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Haftalık Zaman Bütçesi',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF06B6D4)),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          currentDayStr,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2.0,
+                            color: Color(0xFF06B6D4),
+                          ),
+                        ),
+                        Text(
+                          currentDateFormatted,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                      ],
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF2563EB).withOpacity(0.2),
+                        color: Colors.white12,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.water_drop, size: 12, color: Color(0xFF06B6D4)),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Havuz: ${FlutterTimeEngine.formatMinutes(summary.poolBalanceMinutes)}',
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF06B6D4)),
-                          ),
-                        ],
+                      child: Text(
+                        'Vizeye ${planning.daysToMidterms} Gün',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFF59E0B)),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text(
-                      FlutterTimeEngine.formatMinutes(summary.totalRemainingMinutes),
-                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, fontFamily: 'monospace'),
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('kalan', style: TextStyle(fontSize: 13, color: Colors.grey)),
-                    const Spacer(),
-                    Text(
-                      'Hedef: ${FlutterTimeEngine.formatMinutes(summary.totalTargetMinutes)}',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ],
+                const SizedBox(height: 10),
+                const Text(
+                  'Bugün kontrol sende. Plan everything. Force nothing. Finish what matters.',
+                  style: TextStyle(fontSize: 12, color: Colors.white70, height: 1.4),
                 ),
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: LinearProgressIndicator(
-                    value: summary.totalTargetMinutes > 0
-                        ? (summary.totalSpentMinutes / summary.totalTargetMinutes).clamp(0.0, 1.0)
-                        : 0.0,
-                    minHeight: 8,
-                    backgroundColor: Colors.white10,
-                    valueColor: const AlwaysStoppedAnimation(Color(0xFF2563EB)),
-                  ),
-                ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 16),
+
+                // Quick Snapshot Row
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Kullanılan: ${FlutterTimeEngine.formatMinutes(summary.totalSpentMinutes)}',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                    Text(
-                      '${summary.completedCategoriesCount}/${summary.activeCategoriesCount} kategori tamamlandı',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
+                    _buildSnapshotItem('Zorunlu Blok', '${todayEvents.length}'),
+                    _buildSnapshotItem('Bugün Görev', '${tasksToShow.length}'),
+                    _buildSnapshotItem('Haftalık Bütçe', '${summary.totalSpentMinutes}/${summary.totalTargetMinutes} dk'),
+                    _buildSnapshotItem('Havuz', FlutterTimeEngine.formatMinutes(summary.poolBalanceMinutes)),
                   ],
                 ),
               ],
@@ -220,274 +242,301 @@ class TodayTab extends ConsumerWidget {
           ),
         ),
 
-        // Today's Scheduled Routine (from Calendar Events)
-        calendarEventsAsync.when(
-          data: (events) {
-            final todayEvents = events.where((e) => e.dayOfWeek == todayWeekday).toList();
-            if (todayEvents.isEmpty) return const SizedBox.shrink();
-
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.calendar_month, size: 16, color: Color(0xFF06B6D4)),
-                      SizedBox(width: 6),
-                      Text(
-                        'Bugünün Takvim Rutini',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                      ),
-                    ],
+        // Capacity Deficit Alert Banner if applicable
+        if (planning.hasCapacityDeficit)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF59E0B).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.4)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, size: 20, color: Color(0xFFF59E0B)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Planlama Açığı: Bu hafta ${FlutterTimeEngine.formatMinutes(planning.capacityDeficitMinutes)} fazla iş var. Görevleri yeniden dengele veya ertele.',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFF59E0B)),
                   ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: 82,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: todayEvents.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 10),
-                      itemBuilder: (ctx, idx) {
-                        final evt = todayEvents[idx];
-                        Color badgeColor = const Color(0xFF2563EB);
-                        if (evt.type == 'internship') badgeColor = const Color(0xFFF59E0B);
-                        if (evt.type == 'sport') badgeColor = const Color(0xFF10B981);
-                        if (evt.type == 'rest') badgeColor = const Color(0xFF8B5CF6);
+                ),
+              ],
+            ),
+          ),
 
-                        return Container(
-                          width: 170,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).cardColor,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: badgeColor.withOpacity(0.3)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 6,
-                                    height: 6,
-                                    decoration: BoxDecoration(color: badgeColor, shape: BoxShape.circle),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '${evt.startTime} - ${evt.endTime}',
-                                    style: TextStyle(fontSize: 11, color: badgeColor, fontWeight: FontWeight.bold),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                evt.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+        // 2. NEXT UPCOMING EVENT HIGHLIGHT
+        if (nextEvent != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFF06B6D4).withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF06B6D4).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.arrow_forward_rounded, color: Color(0xFF06B6D4), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Sıradaki Etkinlik', style: TextStyle(fontSize: 10, color: Colors.white38)),
+                        Text(nextEvent.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        Text('${nextEvent.startTime} – ${nextEvent.endTime}', style: const TextStyle(fontSize: 11, color: Color(0xFF06B6D4))),
+                      ],
                     ),
                   ),
                 ],
               ),
-            );
-          },
-          loading: () => const SizedBox.shrink(),
-          error: (_, __) => const SizedBox.shrink(),
-        ),
+            ),
+          ),
 
-        // Quick Focus Launch (Categories scheduled today or all)
+        // 3. TODAY'S TASKS SECTION
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
-                'Hızlı Odaklan',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                'BUGÜNÜN GÖREVLERİ',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: Colors.white70),
               ),
-              const SizedBox(height: 10),
-              SizedBox(
-                height: 100,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: categories.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
-                  itemBuilder: (ctx, idx) {
-                    final cat = categories[idx];
-                    final totals = totalsMap[cat.id];
-                    final rem = totals?.remainingMinutes ?? cat.weeklyTargetMinutes;
+              IconButton(
+                icon: const Icon(Icons.add_circle, color: Color(0xFF2563EB), size: 24),
+                tooltip: 'Görev Ekle',
+                onPressed: () => _showAddTaskDialog(context, ref, categories),
+              ),
+            ],
+          ),
+        ),
 
-                    return InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            fullscreenDialog: true,
-                            builder: (_) => FocusTimerModal(category: cat),
-                          ),
-                        );
-                      },
-                      child: Container(
-                        width: 130,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).cardColor,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: cat.color.withOpacity(0.3)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Icon(IconMapper.getIcon(cat.icon), size: 20, color: cat.color),
-                                Icon(Icons.play_circle_outline, size: 20, color: cat.color.withOpacity(0.8)),
-                              ],
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  cat.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                                ),
-                                Text(
-                                  FlutterTimeEngine.formatMinutes(rem),
-                                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+        if (tasksToShow.isEmpty)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: const Center(
+              child: Text(
+                'Bugün için planlanan bekleyen görev yok.\nHarika durumdasın! Dinlen veya odak başlat.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: Colors.white54, height: 1.4),
+              ),
+            ),
+          )
+        else
+          ...tasksToShow.map((task) {
+            final cat = categories.firstWhere(
+              (c) => c.id == task.categoryId,
+              orElse: () => categories.first,
+            );
+            final isDone = task.status == TaskStatus.done;
+
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: isDone ? Colors.white10 : cat.color.withOpacity(0.3)),
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                leading: Checkbox(
+                  value: isDone,
+                  activeColor: const Color(0xFF10B981),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                  onChanged: (_) {
+                    ref.read(tasksNotifierProvider.notifier).toggleTaskStatus(task.id);
+                  },
+                ),
+                title: Text(
+                  task.title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    decoration: isDone ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+                subtitle: Row(
+                  children: [
+                    Icon(IconMapper.getIcon(cat.icon), size: 11, color: cat.color),
+                    const SizedBox(width: 4),
+                    Text(cat.name, style: TextStyle(fontSize: 10, color: cat.color, fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 8),
+                    Text('${task.estimatedMinutes} dk', style: const TextStyle(fontSize: 10, color: Colors.white38)),
+                  ],
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.play_circle_fill, size: 24, color: Color(0xFF2563EB)),
+                  tooltip: 'Odak Başlat',
+                  onPressed: () {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => FocusTimerModal(
+                        preselectedCategoryId: task.categoryId,
+                        preselectedTaskId: task.id,
                       ),
                     );
                   },
                 ),
               ),
+            );
+          }),
+
+        // 4. TODAY'S TIMELINE PREVIEW
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'GÜNLÜK ZAMAN ÇİZELGESİ',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: Colors.white70),
+              ),
+              Text(
+                '${todayEvents.length} Blok',
+                style: const TextStyle(fontSize: 11, color: Colors.white38),
+              ),
             ],
           ),
         ),
 
-        // Today's Tasks
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        if (todayEvents.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Text('Bugün takvimde tanımlı blok yok.', style: TextStyle(fontSize: 12, color: Colors.white38)),
+          )
+        else
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: Column(
+              children: todayEvents.map((evt) {
+                Color c = const Color(0xFF2563EB);
+                if (evt.isRest) c = const Color(0xFF10B981);
+                if (evt.type == 'fitness') c = const Color(0xFFF97316);
+                if (evt.type == 'internship') c = const Color(0xFF8B5CF6);
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 76,
+                        child: Text(
+                          '${evt.startTime}–${evt.endTime}',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: c),
+                        ),
+                      ),
+                      Container(
+                        width: 3,
+                        height: 24,
+                        decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(2)),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          evt.title,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      if (evt.isRest)
+                        const Text('🌱 Serbest', style: TextStyle(fontSize: 10, color: Color(0xFF10B981))),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+
+        // 5. EVENING REVIEW / GÜNÜN ÖZETİ
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+          child: Text(
+            'GÜNÜN DEĞERLENDİRMESİ',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: Colors.white70),
+          ),
+        ),
+
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.04),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white12),
+          ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Haftalık Görevler',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                  TextButton.icon(
-                    icon: const Icon(Icons.add, size: 16),
-                    label: const Text('Görev Ekle', style: TextStyle(fontSize: 12)),
-                    onPressed: () => _showAddTaskDialog(context, ref, categories),
+                  _buildReviewMetric('Tamamlanan', '$completedTodayCount görev'),
+                  _buildReviewMetric('Kalan', '${tasksToShow.length} görev'),
+                  _buildReviewMetric('Ertelenen', '${planning.overdueTasks.length} iş'),
+                ],
+              ),
+              const Divider(color: Colors.white10, height: 24),
+              Row(
+                children: [
+                  const Icon(Icons.bedtime_outlined, size: 18, color: Color(0xFF8B5CF6)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Yarın Planı: Kalkış $tomorrowWakeUp${tomorrowFirst != null ? " • İlk: ${tomorrowFirst.title}" : ""}',
+                      style: const TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.w500),
+                    ),
                   ),
                 ],
               ),
-              if (tasks.isEmpty)
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'Bu haftalık kayıtlı görev yok.\nYeni görev ekleyerek zaman bütçeni hedeflerle eşleştir.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ),
-                )
-              else
-                ...tasks.map((task) {
-                  final cat = categories.firstWhere(
-                    (c) => c.id == task.categoryId,
-                    orElse: () => CategoryModel(
-                      id: task.categoryId,
-                      name: '',
-                      description: '',
-                      icon: 'circle',
-                      colorValue: 0xFF2563EB,
-                      weeklyTargetMinutes: 60,
-                      policy: BudgetPolicy.flexible,
-                      createdAt: DateTime.now(),
-                      updatedAt: DateTime.now(),
-                    ),
-                  );
-
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardColor,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: task.isCompleted
-                            ? const Color(0xFF10B981).withOpacity(0.3)
-                            : Theme.of(context).dividerColor.withOpacity(0.1),
-                      ),
-                    ),
-                    child: ListTile(
-                      dense: true,
-                      leading: Checkbox(
-                        value: task.isCompleted,
-                        activeColor: const Color(0xFF10B981),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                        onChanged: (_) {
-                          ref.read(tasksNotifierProvider.notifier).toggleTaskStatus(task.id);
-                        },
-                      ),
-                      title: Text(
-                        task.title,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-                          color: task.isCompleted ? Colors.grey : null,
-                        ),
-                      ),
-                      subtitle: Row(
-                        children: [
-                          if (cat.name.isNotEmpty) ...[
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(color: cat.color, shape: BoxShape.circle),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(cat.name, style: TextStyle(fontSize: 11, color: cat.color)),
-                            const SizedBox(width: 8),
-                          ],
-                          Text('${task.estimatedMinutes} dk', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                        ],
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
-                        onPressed: () {
-                          ref.read(tasksNotifierProvider.notifier).deleteTask(task.id);
-                        },
-                      ),
-                    ),
-                  );
-                }),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildSnapshotItem(String label, String value) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 9, color: Colors.white54, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReviewMetric(String label, String value) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(fontSize: 10, color: Colors.white38)),
       ],
     );
   }

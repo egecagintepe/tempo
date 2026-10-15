@@ -96,18 +96,74 @@ final categoriesNotifierProvider = StateNotifierProvider<CategoriesNotifier, Lis
   return CategoriesNotifier(ref.watch(databaseProvider));
 });
 
+// --- WEEKLY BUDGETS ---
+class WeeklyBudgetsNotifier extends StateNotifier<List<WeeklyBudgetModel>> {
+  final TempoDatabase _db;
+  final String _weekPeriodId;
+
+  WeeklyBudgetsNotifier(this._db, this._weekPeriodId) : super([]) {
+    loadBudgets();
+  }
+
+  Future<void> loadBudgets() async {
+    final list = await _db.getWeeklyBudgets(_weekPeriodId);
+    state = list;
+  }
+
+  Future<void> updateAllocatedMinutes(String categoryId, int allocatedMinutes) async {
+    await _db.updateWeeklyBudgetAllocatedMinutes(
+      categoryId: categoryId,
+      weekPeriodId: _weekPeriodId,
+      allocatedMinutes: allocatedMinutes,
+    );
+    await loadBudgets();
+  }
+}
+
+final weeklyBudgetsNotifierProvider = StateNotifierProvider<WeeklyBudgetsNotifier, List<WeeklyBudgetModel>>((ref) {
+  final week = ref.watch(currentWeekPeriodProvider);
+  return WeeklyBudgetsNotifier(ref.watch(databaseProvider), week.id);
+});
+
+// --- POOL PROMPT STATE ---
+class PoolPromptState {
+  final String? categoryId;
+  final String? categoryName;
+  final int remainingMinutes;
+
+  const PoolPromptState({this.categoryId, this.categoryName, this.remainingMinutes = 0});
+  bool get hasPrompt => categoryId != null && remainingMinutes > 0;
+}
+
+class PoolPromptNotifier extends StateNotifier<PoolPromptState> {
+  PoolPromptNotifier() : super(const PoolPromptState());
+
+  void showPrompt({required String categoryId, required String categoryName, required int remainingMinutes}) {
+    state = PoolPromptState(categoryId: categoryId, categoryName: categoryName, remainingMinutes: remainingMinutes);
+  }
+
+  void dismiss() {
+    state = const PoolPromptState();
+  }
+}
+
+final poolPromptProvider = StateNotifierProvider<PoolPromptNotifier, PoolPromptState>((ref) {
+  return PoolPromptNotifier();
+});
+
 // --- TASKS ---
 class TasksNotifier extends StateNotifier<List<TaskModel>> {
   final TempoDatabase _db;
   final String _weekPeriodId;
+  final Ref _ref;
 
-  TasksNotifier(this._db, this._weekPeriodId) : super([]) {
+  TasksNotifier(this._db, this._weekPeriodId, this._ref) : super([]) {
     loadTasks();
   }
 
   Future<void> loadTasks() async {
     await _db.ensureWeekRollover(_weekPeriodId);
-    final list = await _db.getTasks(weekPeriodId: _weekPeriodId);
+    final list = await _db.getAllTasks(weekPeriodId: _weekPeriodId);
     state = list;
   }
 
@@ -116,15 +172,74 @@ class TasksNotifier extends StateNotifier<List<TaskModel>> {
     await loadTasks();
   }
 
+  Future<void> updateTask(TaskModel task) async {
+    await _db.updateTask(task);
+    await loadTasks();
+  }
+
   Future<void> toggleTaskStatus(String taskId) async {
     final idx = state.indexWhere((t) => t.id == taskId);
     if (idx != -1) {
       final task = state[idx];
-      final newStatus = task.status == TaskStatus.done ? TaskStatus.todo : TaskStatus.done;
-      final updated = task.copyWith(status: newStatus);
+      final isNowDone = task.status != TaskStatus.done;
+      final newStatus = isNowDone ? TaskStatus.done : TaskStatus.todo;
+      final completedAt = isNowDone ? DateTime.now() : null;
+      final updated = task.copyWith(status: newStatus, completedAt: completedAt);
+      await _db.updateTask(updated);
+      await loadTasks();
+
+      if (isNowDone) {
+        // Completion-first pool suggestion trigger:
+        final catTasks = state.where((t) => t.categoryId == task.categoryId).toList();
+        final allDone = catTasks.isNotEmpty && catTasks.every((t) => t.status == TaskStatus.done);
+        if (allDone) {
+          final totals = _ref.read(categoryTotalsMapProvider)[task.categoryId];
+          final categories = _ref.read(categoriesNotifierProvider);
+          final cat = categories.firstWhere(
+            (c) => c.id == task.categoryId,
+            orElse: () => CategoryModel(
+              id: task.categoryId,
+              name: 'Kategori',
+              description: '',
+              icon: 'circle',
+              colorValue: 0xFF2563EB,
+              weeklyTargetMinutes: 60,
+              policy: BudgetPolicy.flexible,
+              createdAt: DateTime.now(),
+              updatedAt: DateTime.now(),
+            ),
+          );
+          if (totals != null && totals.remainingMinutes > 0 && cat.policy != BudgetPolicy.protected) {
+            _ref.read(poolPromptProvider.notifier).showPrompt(
+              categoryId: task.categoryId,
+              categoryName: cat.name,
+              remainingMinutes: totals.remainingMinutes,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  Future<void> toggleSubtask(String taskId, String subtaskId) async {
+    final taskIdx = state.indexWhere((t) => t.id == taskId);
+    if (taskIdx != -1) {
+      final task = state[taskIdx];
+      final newSubtasks = task.subtasks.map((s) {
+        if (s.id == subtaskId) {
+          return s.copyWith(isCompleted: !s.isCompleted);
+        }
+        return s;
+      }).toList();
+      final updated = task.copyWith(subtasks: newSubtasks);
       await _db.updateTask(updated);
       await loadTasks();
     }
+  }
+
+  Future<void> deferTask(String taskId, String newPlannedDate) async {
+    await _db.deferTask(taskId, newPlannedDate);
+    await loadTasks();
   }
 
   Future<void> deleteTask(String id) async {
@@ -135,7 +250,7 @@ class TasksNotifier extends StateNotifier<List<TaskModel>> {
 
 final tasksNotifierProvider = StateNotifierProvider<TasksNotifier, List<TaskModel>>((ref) {
   final week = ref.watch(currentWeekPeriodProvider);
-  return TasksNotifier(ref.watch(databaseProvider), week.id);
+  return TasksNotifier(ref.watch(databaseProvider), week.id, ref);
 });
 
 // --- SESSIONS ---
@@ -778,8 +893,11 @@ final categoryTotalsMapProvider = Provider<Map<String, CategoryCalculatedTotals>
   final categories = ref.watch(categoriesNotifierProvider);
   final sessions = ref.watch(sessionsNotifierProvider);
   final transactions = ref.watch(transactionsNotifierProvider);
+  final budgets = ref.watch(weeklyBudgetsNotifierProvider);
   final week = ref.watch(currentWeekPeriodProvider);
   final active = ref.watch(activeSessionNotifierProvider);
+
+  final budgetMap = {for (final b in budgets) b.categoryId: b.allocatedMinutes};
 
   final map = <String, CategoryCalculatedTotals>{};
 
@@ -793,6 +911,7 @@ final categoryTotalsMapProvider = Provider<Map<String, CategoryCalculatedTotals>
       sessions: sessions,
       transactions: transactions,
       weekPeriodId: week.id,
+      allocatedMinutes: budgetMap[cat.id],
       activeRunningSeconds: runningSecs,
     );
     map[cat.id] = totals;
@@ -853,5 +972,290 @@ final weeklySummaryProvider = Provider<WeeklyBudgetSummary>((ref) {
     poolBalanceMinutes: pool.balanceMinutes,
     completedCategoriesCount: completedCount,
     activeCategoriesCount: totalsMap.length,
+  );
+});
+
+// --- COURSE TOPICS ---
+class CourseTopicsNotifier extends StateNotifier<List<CourseTopicModel>> {
+  final TempoDatabase _db;
+
+  CourseTopicsNotifier(this._db) : super([]) {
+    loadTopics();
+  }
+
+  Future<void> loadTopics() async {
+    final list = await _db.getCourseTopics();
+    state = list;
+  }
+
+  Future<void> updateTopic(CourseTopicModel topic) async {
+    await _db.updateCourseTopic(topic);
+    await loadTopics();
+  }
+
+  Future<void> setMasteryLevel(String topicId, MasteryLevel level) async {
+    final idx = state.indexWhere((t) => t.id == topicId);
+    if (idx != -1) {
+      final updated = state[idx].copyWith(masteryLevel: level);
+      await _db.updateCourseTopic(updated);
+      await loadTopics();
+    }
+  }
+
+  Future<void> recordPracticeAttempt(String topicId, bool isCorrect) async {
+    final idx = state.indexWhere((t) => t.id == topicId);
+    if (idx != -1) {
+      final curr = state[idx];
+      final updated = curr.copyWith(
+        questionsAttempted: curr.questionsAttempted + 1,
+        questionsCorrect: curr.questionsCorrect + (isCorrect ? 1 : 0),
+      );
+      await _db.updateCourseTopic(updated);
+      await loadTopics();
+    }
+  }
+}
+
+final courseTopicsNotifierProvider = StateNotifierProvider<CourseTopicsNotifier, List<CourseTopicModel>>((ref) {
+  return CourseTopicsNotifier(ref.watch(databaseProvider));
+});
+
+// --- CALENDAR 2.0 EVENTS ---
+class CalendarEventsNotifier extends StateNotifier<List<CalendarEventModel>> {
+  final TempoDatabase _db;
+
+  CalendarEventsNotifier(this._db) : super([]) {
+    loadEvents();
+  }
+
+  Future<void> loadEvents() async {
+    final list = await _db.getCalendarEvents();
+    state = list;
+  }
+
+  Future<void> addEvent(CalendarEventModel event) async {
+    await _db.insertCalendarEvent(event);
+    await loadEvents();
+  }
+
+  Future<void> updateEvent(CalendarEventModel event) async {
+    await _db.updateCalendarEvent(event);
+    await loadEvents();
+  }
+
+  Future<void> deleteEvent(String id) async {
+    await _db.deleteCalendarEvent(id);
+    await loadEvents();
+  }
+
+  Future<void> toggleEventCompleted(String id) async {
+    final idx = state.indexWhere((e) => e.id == id);
+    if (idx != -1) {
+      final evt = state[idx];
+      final updated = evt.copyWith(isCompleted: !evt.isCompleted);
+      await _db.updateCalendarEvent(updated);
+      await loadEvents();
+    }
+  }
+}
+
+final calendarEventsNotifierProvider = StateNotifierProvider<CalendarEventsNotifier, List<CalendarEventModel>>((ref) {
+  return CalendarEventsNotifier(ref.watch(databaseProvider));
+});
+
+// --- LEISURE / REST ITEMS ---
+class LeisureNotifier extends StateNotifier<List<LeisureItemModel>> {
+  final TempoDatabase _db;
+
+  LeisureNotifier(this._db) : super([]) {
+    loadItems();
+  }
+
+  Future<void> loadItems() async {
+    final list = await _db.getLeisureItems();
+    state = list;
+  }
+
+  Future<void> addItem(LeisureItemModel item) async {
+    await _db.insertLeisureItem(item);
+    await loadItems();
+  }
+
+  Future<void> updateItem(LeisureItemModel item) async {
+    await _db.updateLeisureItem(item);
+    await loadItems();
+  }
+
+  Future<void> deleteItem(String id) async {
+    await _db.deleteLeisureItem(id);
+    await loadItems();
+  }
+
+  Future<void> updateStatus(String id, String newStatus) async {
+    final idx = state.indexWhere((i) => i.id == id);
+    if (idx != -1) {
+      final updated = state[idx].copyWith(status: newStatus);
+      await _db.updateLeisureItem(updated);
+      await loadItems();
+    }
+  }
+}
+
+final leisureNotifierProvider = StateNotifierProvider<LeisureNotifier, List<LeisureItemModel>>((ref) {
+  return LeisureNotifier(ref.watch(databaseProvider));
+});
+
+// --- COURSES & GRADES ---
+class CoursesNotifier extends StateNotifier<List<CourseModel>> {
+  CoursesNotifier() : super(CourseModel.predefinedCourses);
+
+  void updateCourse(CourseModel updated) {
+    state = state.map((c) => c.id == updated.id ? updated : c).toList();
+  }
+
+  void updateMidtermScore(String courseId, double score) {
+    state = state.map((c) => c.id == courseId ? CourseModel(
+      id: c.id,
+      name: c.name,
+      code: c.code,
+      difficulty: c.difficulty,
+      targetMidterm: c.targetMidterm,
+      actualMidterm: score,
+      targetFinal: c.targetFinal,
+      actualFinal: c.actualFinal,
+      projectScore: c.projectScore,
+      assessmentWeights: c.assessmentWeights,
+      instructorNotes: c.instructorNotes,
+    ) : c).toList();
+  }
+
+  void updateFinalScore(String courseId, double score) {
+    state = state.map((c) => c.id == courseId ? CourseModel(
+      id: c.id,
+      name: c.name,
+      code: c.code,
+      difficulty: c.difficulty,
+      targetMidterm: c.targetMidterm,
+      actualMidterm: c.actualMidterm,
+      targetFinal: c.targetFinal,
+      actualFinal: score,
+      projectScore: c.projectScore,
+      assessmentWeights: c.assessmentWeights,
+      instructorNotes: c.instructorNotes,
+    ) : c).toList();
+  }
+}
+
+final coursesNotifierProvider = StateNotifierProvider<CoursesNotifier, List<CourseModel>>((ref) {
+  return CoursesNotifier();
+});
+
+// --- TERM MODES ---
+class TermModeNotifier extends StateNotifier<TermModeModel> {
+  final Ref _ref;
+
+  TermModeNotifier(this._ref) : super(TermModeModel.predefinedModes.first) {
+    _initMode();
+  }
+
+  void _initMode() {
+    final settings = _ref.read(settingsNotifierProvider);
+    final found = TermModeModel.predefinedModes.firstWhere(
+      (m) => m.type.name == settings.currentTermMode,
+      orElse: () => TermModeModel.predefinedModes.first,
+    );
+    state = found;
+  }
+
+  Future<void> selectTermMode(TermModeModel mode) async {
+    state = mode;
+    final db = _ref.read(databaseProvider);
+    final week = _ref.read(currentWeekPeriodProvider);
+    await db.applyTermMode(mode, week.id);
+    await _ref.read(categoriesNotifierProvider.notifier).loadCategories();
+    await _ref.read(weeklyBudgetsNotifierProvider.notifier).loadBudgets();
+  }
+}
+
+final termModeNotifierProvider = StateNotifierProvider<TermModeNotifier, TermModeModel>((ref) {
+  return TermModeNotifier(ref);
+});
+
+// --- PLANNING ANALYSIS (Rule-Based Planning Engine) ---
+class PlanningAnalysis {
+  final List<TaskModel> todayTasks;
+  final List<TaskModel> overdueTasks;
+  final int capacityDeficitMinutes;
+  final int daysToMidterms;
+  final int daysToFinals;
+  final String currentTermModeTitle;
+  final List<CalendarEventModel> todayEvents;
+
+  const PlanningAnalysis({
+    required this.todayTasks,
+    required this.overdueTasks,
+    required this.capacityDeficitMinutes,
+    required this.daysToMidterms,
+    required this.daysToFinals,
+    required this.currentTermModeTitle,
+    required this.todayEvents,
+  });
+
+  bool get hasCapacityDeficit => capacityDeficitMinutes > 0;
+  bool get hasOverdue => overdueTasks.isNotEmpty;
+}
+
+final planningAnalysisProvider = Provider<PlanningAnalysis>((ref) {
+  final allTasks = ref.watch(tasksNotifierProvider);
+  final allEvents = ref.watch(calendarEventsNotifierProvider);
+  final termMode = ref.watch(termModeNotifierProvider);
+  final weeklySummary = ref.watch(weeklySummaryProvider);
+
+  final now = DateTime.now();
+  final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  final currentDayOfWeek = now.weekday;
+
+  final todayTasks = allTasks.where((t) {
+    if (t.status == TaskStatus.done) return false;
+    if (t.plannedDate != null && t.plannedDate == todayStr) return true;
+    if (t.dueDate != null && t.dueDate == todayStr) return true;
+    return false;
+  }).toList();
+
+  final displayTasks = todayTasks.isNotEmpty
+      ? todayTasks
+      : allTasks.where((t) => t.status != TaskStatus.done).take(5).toList();
+
+  final overdueTasks = allTasks.where((t) {
+    if (t.status == TaskStatus.done) return false;
+    if (t.dueDate != null && t.dueDate!.compareTo(todayStr) < 0) return true;
+    if (t.plannedDate != null && t.plannedDate!.compareTo(todayStr) < 0) return true;
+    return false;
+  }).toList();
+
+  final pendingEstimateMinutes = allTasks
+      .where((t) => t.status != TaskStatus.done)
+      .fold(0, (sum, t) => sum + t.estimatedMinutes);
+  final availableMinutes = weeklySummary.totalRemainingMinutes;
+  final deficit = pendingEstimateMinutes > availableMinutes ? (pendingEstimateMinutes - availableMinutes) : 0;
+
+  final midtermDate = DateTime(2026, 11, 7);
+  final finalDate = DateTime(2027, 1, 7);
+  final daysMidterm = midtermDate.difference(now).inDays;
+  final daysFinal = finalDate.difference(now).inDays;
+
+  final todayEvents = allEvents.where((e) {
+    if (e.specificDate != null && e.specificDate == todayStr) return true;
+    return e.dayOfWeek == currentDayOfWeek;
+  }).toList();
+
+  return PlanningAnalysis(
+    todayTasks: displayTasks,
+    overdueTasks: overdueTasks,
+    capacityDeficitMinutes: deficit,
+    daysToMidterms: daysMidterm > 0 ? daysMidterm : 0,
+    daysToFinals: daysFinal > 0 ? daysFinal : 0,
+    currentTermModeTitle: termMode.title,
+    todayEvents: todayEvents,
   );
 });

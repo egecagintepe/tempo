@@ -15,7 +15,7 @@ void main() {
     late TempoDatabase db;
 
     setUp(() async {
-      db = TempoDatabase.instance;
+      db = TempoDatabase.custom(dbName: 'test_correctness.db');
       await db.clearActiveSession();
     });
 

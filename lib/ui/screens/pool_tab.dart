@@ -162,6 +162,7 @@ class PoolTab extends ConsumerWidget {
     final pool = ref.watch(poolBalanceProvider);
     final transactions = ref.watch(transactionsNotifierProvider);
     final categories = ref.watch(categoriesNotifierProvider);
+    final poolPrompt = ref.watch(poolPromptProvider);
 
     final lastActiveTx = transactions.where((t) => !t.isUndone).toList();
     final canUndo = lastActiveTx.isNotEmpty;
@@ -170,6 +171,86 @@ class PoolTab extends ConsumerWidget {
       padding: const EdgeInsets.only(bottom: 90),
       children: [
         const ActiveSessionBar(),
+
+        // Completion-First Prompt Banner if triggered
+        if (poolPrompt.hasPrompt)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.celebration, color: Color(0xFF10B981), size: 22),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${poolPrompt.categoryName} Görevleri Bitti!',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF10B981)),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () => ref.read(poolPromptProvider.notifier).dismiss(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Bu haftalık bütün görevlerini tamamladın. Kalan ${poolPrompt.remainingMinutes} dakikayı serbest zaman havuzuna aktarmak ister misin?',
+                    style: const TextStyle(fontSize: 12, color: Colors.white70, height: 1.3),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF10B981),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () {
+                            final week = ref.read(currentWeekPeriodProvider);
+                            final tx = PoolTransactionModel(
+                              id: const Uuid().v4(),
+                              type: 'rollover_to_pool',
+                              sourceCategoryId: poolPrompt.categoryId,
+                              targetCategoryId: null,
+                              minutes: poolPrompt.remainingMinutes,
+                              weekPeriodId: week.id,
+                              timestamp: DateTime.now(),
+                            );
+                            ref.read(transactionsNotifierProvider.notifier).addTransaction(tx);
+                            ref.read(poolPromptProvider.notifier).dismiss();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('${poolPrompt.remainingMinutes} dk serbest havuza aktarıldı! 🎉')),
+                            );
+                          },
+                          child: Text('+${poolPrompt.remainingMinutes} Dk Aktar', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () => ref.read(poolPromptProvider.notifier).dismiss(),
+                        child: const Text('Bütçeyi Koru', style: TextStyle(fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
 
         // Large Glowing Reservoir Droplet Card
         Padding(

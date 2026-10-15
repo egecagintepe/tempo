@@ -1,0 +1,371 @@
+{
+  "edition": "personal",
+  "version": 2,
+  "appTitle": "TEMPO Personal",
+  "tagline": "Plan everything. Force nothing. Finish what matters.",
+  "userContext": {
+    "profile": "Engineering Student & Developer",
+    "totalWeeklyMinutes": 1620,
+    "totalWeeklyHours": 27,
+    "targetGPA": "3.50+",
+    "targetCourseGrade": "90+"
+  },
+  "categories": [
+    {
+      "id": "cat-rf",
+      "name": "RF",
+      "description": "Radio Frequency Circuits - Razavi",
+      "icon": "radio",
+      "color": "#06B6D4",
+      "weeklyTargetMinutes": 420,
+      "policy": "flexible",
+      "priorityOrder": 1,
+      "scheduledDays": [1, 2, 6]
+    },
+    {
+      "id": "cat-elek2",
+      "name": "Elektronik II",
+      "description": "Analog Circuits - Op-Amp, Cascode, Razavi",
+      "icon": "cpu",
+      "color": "#3B82F6",
+      "weeklyTargetMinutes": 420,
+      "policy": "flexible",
+      "priorityOrder": 2,
+      "scheduledDays": [1, 4, 5, 6]
+    },
+    {
+      "id": "cat-c",
+      "name": "C Programming",
+      "description": "C Programming & Project (%40 Project)",
+      "icon": "terminal",
+      "color": "#10B981",
+      "weeklyTargetMinutes": 120,
+      "policy": "flexible",
+      "priorityOrder": 3,
+      "scheduledDays": [3]
+    },
+    {
+      "id": "cat-siber",
+      "name": "Cybersecurity",
+      "description": "Cybersecurity - Threat modelling, network & system security",
+      "icon": "shield",
+      "color": "#6366F1",
+      "weeklyTargetMinutes": 60,
+      "policy": "flexible",
+      "priorityOrder": 4,
+      "scheduledDays": [5]
+    },
+    {
+      "id": "cat-ingilizce",
+      "name": "İngilizce",
+      "description": "IELTS 6.0+ Preparation",
+      "icon": "globe",
+      "color": "#F59E0B",
+      "weeklyTargetMinutes": 120,
+      "policy": "flexible",
+      "priorityOrder": 5,
+      "scheduledDays": [2, 4, 7]
+    },
+    {
+      "id": "cat-almanca",
+      "name": "Almanca",
+      "description": "German A1 Vocabulary",
+      "icon": "book-open",
+      "color": "#EF4444",
+      "weeklyTargetMinutes": 30,
+      "policy": "flexible",
+      "priorityOrder": 6,
+      "scheduledDays": [7]
+    },
+    {
+      "id": "cat-media",
+      "name": "Yayın & Medya",
+      "description": "Weekly QC & Media Publishing",
+      "icon": "film",
+      "color": "#EC4899",
+      "weeklyTargetMinutes": 150,
+      "policy": "flexible",
+      "priorityOrder": 7,
+      "scheduledDays": [1, 5, 7]
+    },
+    {
+      "id": "cat-web-ajansi",
+      "name": "Web Ajansı",
+      "description": "Client Web Projects",
+      "icon": "briefcase",
+      "color": "#8B5CF6",
+      "weeklyTargetMinutes": 120,
+      "policy": "deadline",
+      "deadlineDate": "2026-10-25",
+      "priorityOrder": 8,
+      "scheduledDays": [3, 6]
+    },
+    {
+      "id": "cat-dev",
+      "name": "Geliştirme & Projeler",
+      "description": "Side Project Development",
+      "icon": "code",
+      "color": "#14B8A6",
+      "weeklyTargetMinutes": 60,
+      "policy": "strict",
+      "priorityOrder": 9,
+      "scheduledDays": [6]
+    },
+    {
+      "id": "cat-kitap",
+      "name": "Kitap Yazarlığı",
+      "description": "Creative Writing - Sunday Protected Block",
+      "icon": "feather",
+      "color": "#F97316",
+      "weeklyTargetMinutes": 90,
+      "policy": "protected",
+      "priorityOrder": 10,
+      "scheduledDays": [7]
+    },
+    {
+      "id": "cat-bitirme",
+      "name": "Bitirme Projesi",
+      "description": "Capstone Hardware/Software Coordination",
+      "icon": "activity",
+      "color": "#065F46",
+      "weeklyTargetMinutes": 30,
+      "policy": "flexible",
+      "priorityOrder": 11,
+      "scheduledDays": [4]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-synth-1",
+      "categoryId": "cat-rf",
+      "title": "RF Noise Figure Problems",
+      "estimatedMinutes": 90,
+      "priority": "high",
+      "status": "todo",
+      "recurrence": "weekly",
+      "subtasks": [
+        {"id": "sub-1", "title": "Review formula", "isCompleted": true},
+        {"id": "sub-2", "title": "Solve problem 1", "isCompleted": false}
+      ]
+    },
+    {
+      "id": "task-synth-2",
+      "categoryId": "cat-elek2",
+      "title": "Current Mirrors & Cascodes",
+      "estimatedMinutes": 90,
+      "priority": "high",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-3",
+      "categoryId": "cat-c",
+      "title": "Functions & Decomposition Exercise Set 3",
+      "estimatedMinutes": 60,
+      "priority": "medium",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-4",
+      "categoryId": "cat-siber",
+      "title": "Network Security & MITM Review",
+      "estimatedMinutes": 60,
+      "priority": "medium",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-5",
+      "categoryId": "cat-ingilizce",
+      "title": "IELTS Academic Reading & Listening",
+      "estimatedMinutes": 60,
+      "priority": "medium",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-6",
+      "categoryId": "cat-almanca",
+      "title": "A1 Vocabulary & Basic Phrases",
+      "estimatedMinutes": 30,
+      "priority": "low",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-7",
+      "categoryId": "cat-media",
+      "title": "Monday Episode QC & Verification",
+      "estimatedMinutes": 30,
+      "priority": "high",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-8",
+      "categoryId": "cat-media",
+      "title": "Friday Episode QC & Verification",
+      "estimatedMinutes": 30,
+      "priority": "high",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-9",
+      "categoryId": "cat-media",
+      "title": "Sunday Morning Episode Verification",
+      "estimatedMinutes": 30,
+      "priority": "medium",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-10",
+      "categoryId": "cat-media",
+      "title": "Sunday Afternoon Episode Verification",
+      "estimatedMinutes": 30,
+      "priority": "medium",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-11",
+      "categoryId": "cat-web-ajansi",
+      "title": "Client Site Component Development",
+      "estimatedMinutes": 60,
+      "priority": "high",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-12",
+      "categoryId": "cat-dev",
+      "title": "Side Project Maintenance",
+      "estimatedMinutes": 60,
+      "priority": "low",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-13",
+      "categoryId": "cat-kitap",
+      "title": "Sunday Creative Writing Draft",
+      "estimatedMinutes": 90,
+      "priority": "medium",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-14",
+      "categoryId": "cat-bitirme",
+      "title": "Capstone Hardware Status Sync",
+      "estimatedMinutes": 30,
+      "priority": "low",
+      "status": "todo",
+      "recurrence": "weekly"
+    },
+    {
+      "id": "task-synth-15",
+      "categoryId": "cat-rf",
+      "title": "RF Extra Lecture Practice Problems",
+      "estimatedMinutes": 60,
+      "priority": "high",
+      "status": "todo",
+      "recurrence": "once"
+    }
+  ],
+  "calendarEvents": [
+    {
+      "id": "evt-synth-1",
+      "categoryId": "cat-elek2",
+      "title": "Elektronik II Dersi",
+      "dayOfWeek": 1,
+      "startTime": "10:40",
+      "endTime": "12:30",
+      "isRecurring": true
+    },
+    {
+      "id": "evt-synth-2",
+      "categoryId": "cat-rf",
+      "title": "RF Dersi",
+      "dayOfWeek": 1,
+      "startTime": "15:40",
+      "endTime": "17:30",
+      "isRecurring": true
+    },
+    {
+      "id": "evt-synth-3",
+      "categoryId": "cat-c",
+      "title": "C Programming Dersi",
+      "dayOfWeek": 3,
+      "startTime": "13:40",
+      "endTime": "16:40",
+      "isRecurring": true
+    }
+  ],
+  "academicMilestones": [
+    {
+      "id": "ms-synth-1",
+      "title": "Güz Dönemi Vizeleri",
+      "startDate": "2026-11-07",
+      "endDate": "2026-11-15",
+      "type": "exam_period",
+      "description": "Vize dönemi (Tüm dersler 90+ hedefi)"
+    },
+    {
+      "id": "ms-synth-2",
+      "title": "C 4 Modüllü Proje Teslimi",
+      "startDate": "2026-12-21",
+      "endDate": "2026-12-27",
+      "type": "submission",
+      "description": "Sistem Entegrasyonu & Project Freeze"
+    },
+    {
+      "id": "ms-synth-3",
+      "title": "Güz Dönemi Finalleri",
+      "startDate": "2027-01-07",
+      "endDate": "2027-01-19",
+      "type": "exam_period",
+      "description": "Final sınav maratonu"
+    }
+  ],
+  "courseTopics": [
+    {
+      "id": "topic-rf-w1",
+      "courseId": "course-rf",
+      "weekNumber": 1,
+      "title": "Basic Concepts of RF Design",
+      "description": "Gain, linearity and basic definitions",
+      "masteryLevel": "independent",
+      "questionsAttempted": 10,
+      "questionsCorrect": 9
+    },
+    {
+      "id": "topic-elek2-w1",
+      "courseId": "course-elek2",
+      "weekNumber": 1,
+      "title": "Op-Amp as a Black Box",
+      "description": "Virtual short, gain and saturation",
+      "masteryLevel": "examReady",
+      "questionsAttempted": 12,
+      "questionsCorrect": 12
+    }
+  ],
+  "leisureItems": [
+    {
+      "id": "lei-synth-1",
+      "title": "Persona 5 Royal",
+      "type": "game",
+      "status": "in_progress",
+      "rating": 10
+    },
+    {
+      "id": "lei-synth-2",
+      "title": "Haftalık Anime Serileri",
+      "type": "anime",
+      "status": "in_progress",
+      "note": "Dinlenme amaçlı"
+    }
+  ]
+}

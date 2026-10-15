@@ -134,9 +134,10 @@ class FlutterTimeEngine {
     required List<WorkSessionModel> sessions,
     required List<PoolTransactionModel> transactions,
     required String weekPeriodId,
+    int? allocatedMinutes,
     int activeRunningSeconds = 0,
   }) {
-    final initialTargetMinutes = category.weeklyTargetMinutes;
+    final initialTargetMinutes = allocatedMinutes ?? category.weeklyTargetMinutes;
 
     int transferIn = 0;
     int transferOut = 0;

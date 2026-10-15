@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/tempo_theme.dart';
+import 'domain/models.dart';
 import 'domain/time_engine.dart';
 import 'providers/tempo_providers.dart';
 import 'services/notification_service.dart';
-import 'ui/screens/analytics_tab.dart';
-import 'ui/screens/budgets_tab.dart';
-import 'ui/screens/calendar_modal.dart';
+import 'ui/screens/calendar_tab.dart';
+import 'ui/screens/focus_timer_modal.dart';
 import 'ui/screens/onboarding_modal.dart';
 import 'ui/screens/pool_tab.dart';
+import 'ui/screens/progress_tab.dart';
 import 'ui/screens/settings_modal.dart';
+import 'ui/screens/tasks_tab.dart';
 import 'ui/screens/today_tab.dart';
+import 'ui/widgets/tempo_logo.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,7 +49,7 @@ class TempoApp extends ConsumerWidget {
     }
 
     return MaterialApp(
-      title: 'TEMPO — Personal Time Budget OS',
+      title: 'TEMPO — Personal Life Operating System',
       debugShowCheckedModeBanner: false,
       theme: TempoTheme.lightTheme,
       darkTheme: settings.theme == 'oled' ? TempoTheme.oledTheme : TempoTheme.darkTheme,
@@ -69,9 +72,10 @@ class _TempoHomeScreenState extends ConsumerState<TempoHomeScreen> {
 
   final List<Widget> _tabs = const [
     TodayTab(),
-    BudgetsTab(),
+    TasksTab(),
+    CalendarTab(),
     PoolTab(),
-    AnalyticsTab(),
+    ProgressTab(),
   ];
 
   @override
@@ -101,48 +105,75 @@ class _TempoHomeScreenState extends ConsumerState<TempoHomeScreen> {
     }
   }
 
+  void _openFocusTimer() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const FocusTimerModal(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pool = ref.watch(poolBalanceProvider);
+    final termMode = ref.watch(termModeNotifierProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            const Text(
-              'TEMPO.',
-              style: TextStyle(fontWeight: FontWeight.w900, fontFamily: 'monospace', fontSize: 18),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.white12,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text('OS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-            ),
-          ],
+        titleSpacing: 16,
+        title: TempoLogo(
+          size: 26,
+          isDark: isDark,
         ),
         actions: [
+          // Active Term Mode Pill
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2563EB).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF2563EB).withOpacity(0.25)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.school, size: 12, color: Color(0xFF2563EB)),
+                const SizedBox(width: 4),
+                Text(
+                  termMode.type == TermModeType.modeAMidtermPrep
+                      ? 'Vize Hazırlık'
+                      : termMode.type == TermModeType.modeBMidtermWeek
+                          ? 'Sınav Modu'
+                          : termMode.type == TermModeType.modeCNormalTerm
+                              ? 'Normal & Proje'
+                              : 'Final Modu',
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+
           // Quick Free Time Pool Badge in AppBar
           GestureDetector(
             onTap: () {
-              setState(() => _currentIndex = 2); // Switch to Pool Tab
+              setState(() => _currentIndex = 3); // Switch to Pool Tab
             },
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: const Color(0xFF06B6D4).withOpacity(0.12),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: const Color(0xFF06B6D4).withOpacity(0.3)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.water_drop, size: 14, color: Color(0xFF06B6D4)),
+                  const Icon(Icons.water_drop, size: 12, color: Color(0xFF06B6D4)),
                   const SizedBox(width: 4),
                   Text(
-                    'Havuz: ${FlutterTimeEngine.formatMinutes(pool.balanceMinutes)}',
+                    FlutterTimeEngine.formatMinutes(pool.balanceMinutes),
                     style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF06B6D4)),
                   ),
                 ],
@@ -150,15 +181,7 @@ class _TempoHomeScreenState extends ConsumerState<TempoHomeScreen> {
             ),
           ),
           const SizedBox(width: 4),
-          IconButton(
-            icon: const Icon(Icons.calendar_today_outlined, size: 20),
-            tooltip: 'Haftalık Rutin & Takvim',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const CalendarModal()),
-              );
-            },
-          ),
+
           IconButton(
             icon: const Icon(Icons.settings_outlined, size: 20),
             tooltip: 'Ayarlar',
@@ -175,19 +198,32 @@ class _TempoHomeScreenState extends ConsumerState<TempoHomeScreen> {
         index: _currentIndex,
         children: _tabs,
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _openFocusTimer,
+        backgroundColor: const Color(0xFF2563EB),
+        foregroundColor: Colors.white,
+        tooltip: 'Odak Sayacı',
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: const Icon(Icons.play_arrow, size: 28),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard),
+            icon: Icon(Icons.today_outlined),
+            selectedIcon: Icon(Icons.today),
             label: 'Bugün',
           ),
           NavigationDestination(
-            icon: Icon(Icons.layers_outlined),
-            selectedIcon: Icon(Icons.layers),
-            label: 'Bütçeler',
+            icon: Icon(Icons.task_alt_outlined),
+            selectedIcon: Icon(Icons.task_alt),
+            label: 'Görevler',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.calendar_month_outlined),
+            selectedIcon: Icon(Icons.calendar_month),
+            label: 'Takvim',
           ),
           NavigationDestination(
             icon: Icon(Icons.water_drop_outlined),
@@ -195,9 +231,9 @@ class _TempoHomeScreenState extends ConsumerState<TempoHomeScreen> {
             label: 'Havuz',
           ),
           NavigationDestination(
-            icon: Icon(Icons.pie_chart_outline),
-            selectedIcon: Icon(Icons.pie_chart),
-            label: 'Analiz',
+            icon: Icon(Icons.auto_graph_outlined),
+            selectedIcon: Icon(Icons.auto_graph),
+            label: 'İlerleme',
           ),
         ],
       ),

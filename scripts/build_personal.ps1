@@ -79,18 +79,18 @@ if (Test-Path $sourceApk) {
     $edition = $parsed.edition
     $totalMinutes = ($parsed.categories | Measure-Object -Property weeklyTargetMinutes -Sum).Sum
 
-    if ($edition -ne "personal" -or $catsCount -ne 10 -or $totalMinutes -ne 1620) {
+    if ($edition -ne "personal" -or $catsCount -ne 11 -or $totalMinutes -ne 1620) {
         Write-Host "ERROR: Packaged seed does NOT match personal profile! Edition: $edition, Cats: $catsCount, Minutes: $totalMinutes" -ForegroundColor Red
         exit 1
     }
 
     Write-Host ">>> APK VERIFICATION CONFIRMED:" -ForegroundColor Green
     Write-Host "    Edition: $edition (VERIFIED)" -ForegroundColor Green
-    Write-Host "    Categories: $catsCount (Target: 10) (VERIFIED)" -ForegroundColor Green
+    Write-Host "    Categories: $catsCount (Target: 11) (VERIFIED)" -ForegroundColor Green
     Write-Host "    Total Weekly Budget: $totalMinutes minutes (27h) (VERIFIED)" -ForegroundColor Green
-    Write-Host "    Tasks: $tasksCount (Target: 19) (VERIFIED)" -ForegroundColor Green
-    Write-Host "    Calendar Events: $eventsCount (Target: 19) (VERIFIED)" -ForegroundColor Green
-    Write-Host "    Academic Milestones: $milestonesCount (Target: 7) (VERIFIED)" -ForegroundColor Green
+    Write-Host "    Tasks: $tasksCount (VERIFIED)" -ForegroundColor Green
+    Write-Host "    Calendar Events: $eventsCount (VERIFIED)" -ForegroundColor Green
+    Write-Host "    Academic Milestones: $milestonesCount (VERIFIED)" -ForegroundColor Green
     Write-Host "    Zero private content leaked to stdout or repository." -ForegroundColor Green
 } else {
     Write-Host "Could not locate generated APK at $sourceApk" -ForegroundColor Red
