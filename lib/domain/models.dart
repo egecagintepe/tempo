@@ -93,38 +93,80 @@ class CategoryModel {
   }
 
   factory CategoryModel.fromMap(Map<String, dynamic> map) {
-    List<int>? days;
-    if (map['scheduled_days'] != null) {
-      try {
-        final decoded = jsonDecode(map['scheduled_days'] as String);
-        if (decoded is List) {
-          days = decoded.map((e) => (e as num).toInt()).toList();
-        }
-      } catch (_) {}
+    // 1. Color parsing: can be int ('color_value', 'colorValue') or hex string ('color')
+    int colorValue = 0xFF2563EB;
+    final rawColor = map['color_value'] ?? map['colorValue'] ?? map['color'];
+    if (rawColor is num) {
+      colorValue = rawColor.toInt();
+    } else if (rawColor is String) {
+      var s = rawColor.trim();
+      if (s.startsWith('#')) s = s.substring(1);
+      if (s.length == 6) {
+        final parsed = int.tryParse('FF$s', radix: 16);
+        if (parsed != null) colorValue = parsed;
+      } else if (s.length == 8) {
+        final parsed = int.tryParse(s, radix: 16);
+        if (parsed != null) colorValue = parsed;
+      }
     }
 
+    // 2. Scheduled days: can be List<dynamic> (from JSON) or JSON String (from SQLite)
+    List<int>? days;
+    final rawDays = map['scheduled_days'] ?? map['scheduledDays'];
+    if (rawDays != null) {
+      if (rawDays is List) {
+        days = rawDays.map((e) => (e as num).toInt()).toList();
+      } else if (rawDays is String) {
+        try {
+          final decoded = jsonDecode(rawDays);
+          if (decoded is List) {
+            days = decoded.map((e) => (e as num).toInt()).toList();
+          }
+        } catch (_) {}
+      }
+    }
+
+    // 3. Policy:
     BudgetPolicy policy = BudgetPolicy.flexible;
+    final rawPolicy = map['policy'];
     for (final p in BudgetPolicy.values) {
-      if (p.name == map['policy']) {
+      if (p.name == rawPolicy) {
         policy = p;
         break;
       }
     }
+
+    // 4. Weekly target minutes:
+    final rawTarget = map['weekly_target_minutes'] ?? map['weeklyTargetMinutes'];
+    final weeklyTargetMinutes = (rawTarget as num?)?.toInt() ?? 60;
+
+    // 5. Priority order:
+    final rawPriority = map['priority_order'] ?? map['priorityOrder'];
+    final priorityOrder = (rawPriority as num?)?.toInt() ?? 0;
+
+    // 6. Deadline date:
+    final deadlineDate = (map['deadline_date'] ?? map['deadlineDate']) as String?;
+
+    // 7. isArchived:
+    final rawArchived = map['is_archived'] ?? map['isArchived'];
+    final isArchived = rawArchived is bool
+        ? rawArchived
+        : (rawArchived as num?)?.toInt() == 1;
 
     return CategoryModel(
       id: map['id'] as String,
       name: map['name'] as String,
       description: (map['description'] as String?) ?? '',
       icon: (map['icon'] as String?) ?? 'circle',
-      colorValue: (map['color_value'] as num?)?.toInt() ?? 0xFF2563EB,
-      weeklyTargetMinutes: (map['weekly_target_minutes'] as num?)?.toInt() ?? 60,
+      colorValue: colorValue,
+      weeklyTargetMinutes: weeklyTargetMinutes,
       policy: policy,
-      isArchived: (map['is_archived'] as num?)?.toInt() == 1,
-      priorityOrder: (map['priority_order'] as num?)?.toInt() ?? 0,
+      isArchived: isArchived,
+      priorityOrder: priorityOrder,
       scheduledDays: days,
-      deadlineDate: map['deadline_date'] as String?,
-      createdAt: DateTime.tryParse((map['created_at'] as String?) ?? '') ?? DateTime.now(),
-      updatedAt: DateTime.tryParse((map['updated_at'] as String?) ?? '') ?? DateTime.now(),
+      deadlineDate: deadlineDate,
+      createdAt: DateTime.tryParse((map['created_at'] ?? map['createdAt'] as String?) ?? '') ?? DateTime.now(),
+      updatedAt: DateTime.tryParse((map['updated_at'] ?? map['updatedAt'] as String?) ?? '') ?? DateTime.now(),
     );
   }
 }
@@ -211,43 +253,51 @@ class TaskModel {
 
   factory TaskModel.fromMap(Map<String, dynamic> map) {
     TaskPriority prio = TaskPriority.medium;
+    final rawPrio = map['priority'];
     for (final p in TaskPriority.values) {
-      if (p.name == map['priority']) {
+      if (p.name == rawPrio) {
         prio = p;
         break;
       }
     }
 
     TaskStatus stat = TaskStatus.todo;
+    final rawStat = map['status'];
     for (final s in TaskStatus.values) {
-      if (s.name == map['status']) {
+      if (s.name == rawStat) {
         stat = s;
         break;
       }
     }
 
     TaskRecurrence rec = TaskRecurrence.weekly;
+    final rawRec = map['recurrence'];
     for (final r in TaskRecurrence.values) {
-      if (r.name == map['recurrence']) {
+      if (r.name == rawRec) {
         rec = r;
         break;
       }
     }
 
+    final catId = (map['category_id'] ?? map['categoryId']) as String;
+    final estMins = (map['estimated_minutes'] ?? map['estimatedMinutes'] as num?)?.toInt() ?? 30;
+    final actMins = (map['actual_tracked_minutes'] ?? map['actualTrackedMinutes'] as num?)?.toInt() ?? 0;
+    final weekId = (map['week_period_id'] ?? map['weekPeriodId'] as String?) ?? '';
+
     return TaskModel(
       id: map['id'] as String,
-      categoryId: map['category_id'] as String,
+      categoryId: catId,
       title: map['title'] as String,
       description: map['description'] as String?,
-      estimatedMinutes: (map['estimated_minutes'] as num?)?.toInt() ?? 30,
-      actualTrackedMinutes: (map['actual_tracked_minutes'] as num?)?.toInt() ?? 0,
+      estimatedMinutes: estMins,
+      actualTrackedMinutes: actMins,
       priority: prio,
       status: stat,
       deadline: map['deadline'] as String?,
-      weekPeriodId: (map['week_period_id'] as String?) ?? '',
+      weekPeriodId: weekId,
       recurrence: rec,
-      createdAt: DateTime.tryParse((map['created_at'] as String?) ?? '') ?? DateTime.now(),
-      updatedAt: DateTime.tryParse((map['updated_at'] as String?) ?? '') ?? DateTime.now(),
+      createdAt: DateTime.tryParse((map['created_at'] ?? map['createdAt'] as String?) ?? '') ?? DateTime.now(),
+      updatedAt: DateTime.tryParse((map['updated_at'] ?? map['updatedAt'] as String?) ?? '') ?? DateTime.now(),
     );
   }
 }
@@ -536,14 +586,20 @@ class CalendarEventModel {
   }
 
   factory CalendarEventModel.fromMap(Map<String, dynamic> map) {
+    final dOfWeek = (map['day_of_week'] ?? map['dayOfWeek'] as num?)?.toInt() ?? 1;
+    final sTime = (map['start_time'] ?? map['startTime'] as String?) ?? '09:00';
+    final eTime = (map['end_time'] ?? map['endTime'] as String?) ?? '10:00';
+    final tType = (map['type'] as String?) ?? 'study_block';
+    final cId = (map['category_id'] ?? map['categoryId'] as String?);
+
     return CalendarEventModel(
-      id: map['id'] as String,
+      id: (map['id'] as String?) ?? 'cal_${dOfWeek}_${sTime.replaceAll(':', '')}_${(map['title'] ?? '').toString().replaceAll(RegExp(r'\s+'), '_')}',
       title: map['title'] as String,
-      dayOfWeek: (map['day_of_week'] as num?)?.toInt() ?? 1,
-      startTime: (map['start_time'] as String?) ?? '09:00',
-      endTime: (map['end_time'] as String?) ?? '10:00',
-      type: (map['type'] as String?) ?? 'study_block',
-      categoryId: map['category_id'] as String?,
+      dayOfWeek: dOfWeek,
+      startTime: sTime,
+      endTime: eTime,
+      type: tType,
+      categoryId: cId,
     );
   }
 }
@@ -571,11 +627,16 @@ class AcademicMilestoneModel {
   }
 
   factory AcademicMilestoneModel.fromMap(Map<String, dynamic> map) {
+    final sDate = (map['start_date'] ?? map['startDate'] as String?) ?? '';
+    final eDate = (map['end_date'] ?? map['endDate'] as String?) ?? '';
+    final title = (map['title'] as String?) ?? '';
+    final id = (map['id'] as String?) ?? 'ms_${sDate}_${title.replaceAll(RegExp(r'\s+'), '_')}';
+
     return AcademicMilestoneModel(
-      id: (map['id'] as String?) ?? UniqueKey().toString(),
-      title: map['title'] as String,
-      startDate: map['start_date'] as String,
-      endDate: map['end_date'] as String,
+      id: id,
+      title: title,
+      startDate: sDate,
+      endDate: eDate,
     );
   }
 }

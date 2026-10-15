@@ -195,6 +195,41 @@ class SettingsModal extends ConsumerWidget {
 
           const SizedBox(height: 20),
 
+          // Section: Seed Repair (Lossless)
+          Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.build_circle_outlined, color: Color(0xFF10B981)),
+              title: const Text('Başlangıç Verilerini Onar (Kayıpsız)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+              subtitle: const Text('Oturum geçmişinizi koruyarak eksik kategori, görev ve haftalık programı tamamlar', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              onTap: () async {
+                try {
+                  final report = await db.repairSeedDataLossless();
+                  await ref.read(categoriesNotifierProvider.notifier).loadCategories();
+                  await ref.read(tasksNotifierProvider.notifier).loadTasks();
+                  await ref.read(sessionsNotifierProvider.notifier).loadSessions();
+                  await ref.read(transactionsNotifierProvider.notifier).loadTransactions();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(report.message)),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Onarım hatası: $e')),
+                    );
+                  }
+                }
+              },
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
           // Section: Reset to Seed
           Container(
             decoration: BoxDecoration(

@@ -1,15 +1,18 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import '../domain/models.dart';
 import '../domain/time_engine.dart';
+import 'seed_parser.dart';
 
 class TempoDatabase {
   static final TempoDatabase instance = TempoDatabase._internal();
   TempoDatabase._internal();
 
   Database? _db;
+  Future<void>? _seedingFuture;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -279,102 +282,329 @@ class TempoDatabase {
     ''');
   }
 
-  // --- SEED INITIALIZATION (Idempotent) ---
-  Future<void> initializeSeedDataIfEmpty() async {
+  // --- SEED INITIALIZATION (Idempotent & Transaction-Safe) ---
+  Future<void> initializeSeedDataIfEmpty() {
+    if (_seedingFuture != null) return _seedingFuture!;
+    _seedingFuture = _performInitializeSeedDataIfEmpty();
+    return _seedingFuture!;
+  }
+
+  Future<void> _performInitializeSeedDataIfEmpty() async {
     final db = await database;
     final categoryCount = Sqflite.firstIntValue(
       await db.rawQuery('SELECT COUNT(*) FROM categories'),
     ) ?? 0;
 
-    if (categoryCount > 0) {
-      return; // Already initialized, preserve user customisations!
+    // Check if this installation suffered the previous seed loading crash:
+    // Fingerprint of failed install:
+    // 1. Exactly 1 category and it is 'cat-deep-work'
+    // 2. AND 0 tasks AND 0 calendar_events
+    // 3. AND settings table has seed_version == 0
+    bool isFailedInstall = false;
+    if (categoryCount == 1) {
+      final cat = await db.query('categories', where: 'id = ?', whereArgs: ['cat-deep-work']);
+      final taskCount = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM tasks')) ?? 0;
+      final calCount = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM calendar_events')) ?? 0;
+      final settings = await getSettings();
+      if (cat.isNotEmpty && taskCount == 0 && calCount == 0 && settings.seedVersion == 0) {
+        isFailedInstall = true;
+      }
+    }
+
+    if (categoryCount > 0 && !isFailedInstall) {
+      return; // Cleanly initialized, preserve existing user configuration
     }
 
     try {
       String jsonStr = '';
       try {
         jsonStr = await rootBundle.loadString('assets/seed.json');
-      } catch (_) {
+      } catch (assetErr) {
+        debugPrint('TEMPO: assets/seed.json not found in rootBundle ($assetErr), trying config/seeds/public.json');
         jsonStr = await rootBundle.loadString('config/seeds/public.json');
       }
 
       final Map<String, dynamic> data = jsonDecode(jsonStr);
-      await loadSeedData(data);
-    } catch (e) {
-      // Fallback: create 3 basic categories if asset reading fails
-      await insertCategory(CategoryModel(
-        id: 'cat-deep-work',
-        name: 'Deep Work',
-        description: 'Focused problem solving',
-        icon: 'cpu',
-        colorValue: 0xFF2563EB,
-        weeklyTargetMinutes: 420,
-        policy: BudgetPolicy.flexible,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      ));
+      final parseResult = SeedParser.parse(data);
+      if (!parseResult.isValid) {
+        final errText = parseResult.validationErrors.join('; ');
+        debugPrint('TEMPO SEED ERROR: Validation failed: $errText');
+        throw StateError('Seed JSON validation failed: $errText');
+      }
+
+      // If recovering from a failed install where cat-deep-work had NO recorded sessions, clean up cat-deep-work
+      if (isFailedInstall) {
+        final sessionsOnDeepWork = Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM sessions WHERE category_id = ?', ['cat-deep-work']),
+        ) ?? 0;
+        if (sessionsOnDeepWork == 0 && !parseResult.categories.any((c) => c.id == 'cat-deep-work')) {
+          await db.delete('categories', where: 'id = ?', whereArgs: ['cat-deep-work']);
+          debugPrint('TEMPO SEED RECOVERY: Cleaned up empty fallback "cat-deep-work" category.');
+        }
+      }
+
+      await loadSeedResult(parseResult);
+      debugPrint('TEMPO SEED SUCCESS: Loaded ${parseResult.categories.length} categories (${parseResult.totalCategoryMinutes} mins), '
+          '${parseResult.tasks.length} tasks, ${parseResult.calendarEvents.length} calendar events, '
+          '${parseResult.academicMilestones.length} academic milestones.');
+    } catch (e, stack) {
+      debugPrint('TEMPO CRITICAL SEED INITIALIZATION ERROR: $e\n$stack');
+      rethrow;
     }
   }
 
   Future<void> loadSeedData(Map<String, dynamic> data) async {
+    final result = SeedParser.parse(data);
+    if (!result.isValid) {
+      final err = result.validationErrors.join('; ');
+      debugPrint('TEMPO SEED ERROR: Validation failed in loadSeedData: $err');
+      throw ArgumentError('Seed data validation failed: $err');
+    }
+    await loadSeedResult(result);
+  }
+
+  Future<void> loadSeedResult(SeedParseResult result) async {
     final db = await database;
+    final currentWeekId = FlutterTimeEngine.getWeekPeriod().id;
+    final now = DateTime.now();
+
     await db.transaction((txn) async {
       // 1. Categories
-      if (data['categories'] is List) {
-        for (final item in data['categories']) {
-          final cat = CategoryModel.fromMap(item);
-          await txn.insert(
-            'categories',
-            cat.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
+      for (final cat in result.categories) {
+        await txn.insert(
+          'categories',
+          cat.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
 
       // 2. Tasks
-      if (data['tasks'] is List) {
-        for (final item in data['tasks']) {
-          final task = TaskModel.fromMap(item);
-          await txn.insert(
-            'tasks',
-            task.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
+      for (final task in result.tasks) {
+        final taskToInsert = task.weekPeriodId.isEmpty
+            ? task.copyWith(weekPeriodId: currentWeekId)
+            : task;
+        await txn.insert(
+          'tasks',
+          taskToInsert.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
 
       // 3. Calendar Events
-      if (data['calendarEvents'] is List) {
-        for (final item in data['calendarEvents']) {
-          final evt = CalendarEventModel.fromMap(item);
-          await txn.insert(
-            'calendar_events',
-            evt.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
+      for (final evt in result.calendarEvents) {
+        await txn.insert(
+          'calendar_events',
+          evt.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
 
       // 4. Academic Milestones
-      if (data['academicMilestones'] is List) {
-        for (final item in data['academicMilestones']) {
-          final ms = AcademicMilestoneModel.fromMap(item);
-          await txn.insert(
-            'academic_milestones',
-            ms.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
+      for (final ms in result.academicMilestones) {
+        await txn.insert(
+          'academic_milestones',
+          ms.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // 5. Ensure weekly_periods record exists
+      final pRows = await txn.query('weekly_periods', where: 'id = ?', whereArgs: [currentWeekId]);
+      if (pRows.isEmpty) {
+        final weekInfo = FlutterTimeEngine.getWeekPeriod();
+        await txn.insert('weekly_periods', {
+          'id': currentWeekId,
+          'start_date': weekInfo.start.toIso8601String(),
+          'end_date': weekInfo.end.toIso8601String(),
+          'created_at': now.toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+
+      // 6. Ensure weekly_budgets for all active categories with their full weekly target minutes
+      for (final cat in result.categories) {
+        final bRows = await txn.query(
+          'weekly_budgets',
+          where: 'category_id = ? AND week_period_id = ?',
+          whereArgs: [cat.id, currentWeekId],
+        );
+        if (bRows.isEmpty) {
+          await txn.insert('weekly_budgets', {
+            'id': '${cat.id}_$currentWeekId',
+            'category_id': cat.id,
+            'week_period_id': currentWeekId,
+            'allocated_minutes': cat.weeklyTargetMinutes,
+            'transferred_in_minutes': 0,
+            'transferred_out_minutes': 0,
+            'is_completed': 0,
+            'created_at': now.toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
         }
       }
 
-      // 5. Update seed version in settings
+      // 7. Update seed version in settings
       await txn.update(
         'settings',
-        {'seed_version': (data['version'] as num?)?.toInt() ?? 1},
+        {'seed_version': result.version},
         where: 'id = ?',
         whereArgs: ['app_settings'],
       );
     });
+  }
+
+  /// Lossless repair and re-import of seed data for existing installations.
+  /// Preserves all recorded user sessions, segments, breaks, and custom categories/tasks,
+  /// while restoring missing profile categories, tasks, calendar events, and week budgets.
+  Future<SeedRepairReport> repairSeedDataLossless({String? jsonStr}) async {
+    final db = await database;
+    String rawJson = jsonStr ?? '';
+    if (rawJson.isEmpty) {
+      try {
+        rawJson = await rootBundle.loadString('assets/seed.json');
+      } catch (_) {
+        rawJson = await rootBundle.loadString('config/seeds/public.json');
+      }
+    }
+
+    final Map<String, dynamic> data = jsonDecode(rawJson);
+    final result = SeedParser.parse(data);
+    if (!result.isValid) {
+      throw StateError('Seed parsing failed during repair: ${result.validationErrors.join("; ")}');
+    }
+
+    final currentWeekId = FlutterTimeEngine.getWeekPeriod().id;
+    final now = DateTime.now();
+
+    int catsAdded = 0;
+    int tasksAdded = 0;
+    int eventsAdded = 0;
+    int milestonesAdded = 0;
+    int budgetsEnsured = 0;
+    bool cleanedFallback = false;
+
+    await db.transaction((txn) async {
+      // Clean fallback if cat-deep-work has 0 sessions and is not in seed
+      final deepWorkRows = await txn.query('categories', where: 'id = ?', whereArgs: ['cat-deep-work']);
+      if (deepWorkRows.isNotEmpty && !result.categories.any((c) => c.id == 'cat-deep-work')) {
+        final sessionsOnDeep = Sqflite.firstIntValue(
+          await txn.rawQuery('SELECT COUNT(*) FROM sessions WHERE category_id = ?', ['cat-deep-work']),
+        ) ?? 0;
+        if (sessionsOnDeep == 0) {
+          await txn.delete('categories', where: 'id = ?', whereArgs: ['cat-deep-work']);
+          await txn.delete('weekly_budgets', where: 'category_id = ?', whereArgs: ['cat-deep-work']);
+          cleanedFallback = true;
+        }
+      }
+
+      // 1. Categories (Insert if missing, or update target minutes if it was 60 default)
+      for (final cat in result.categories) {
+        final existing = await txn.query('categories', where: 'id = ?', whereArgs: [cat.id]);
+        if (existing.isEmpty) {
+          await txn.insert('categories', cat.toMap());
+          catsAdded++;
+        } else {
+          // If category already exists, update color & target minutes if they were uninitialized or default
+          final currTarget = existing.first['weekly_target_minutes'] as int? ?? 0;
+          if (currTarget == 60 && cat.weeklyTargetMinutes != 60) {
+            await txn.update(
+              'categories',
+              {
+                'weekly_target_minutes': cat.weeklyTargetMinutes,
+                'color_value': cat.colorValue,
+              },
+              where: 'id = ?',
+              whereArgs: [cat.id],
+            );
+          }
+        }
+      }
+
+      // 2. Tasks (Insert missing tasks)
+      for (final task in result.tasks) {
+        final taskToInsert = task.weekPeriodId.isEmpty
+            ? task.copyWith(weekPeriodId: currentWeekId)
+            : task;
+        final existing = await txn.query('tasks', where: 'id = ?', whereArgs: [taskToInsert.id]);
+        if (existing.isEmpty) {
+          await txn.insert('tasks', taskToInsert.toMap());
+          tasksAdded++;
+        }
+      }
+
+      // 3. Calendar Events (Insert missing events)
+      for (final evt in result.calendarEvents) {
+        final existing = await txn.query('calendar_events', where: 'id = ?', whereArgs: [evt.id]);
+        if (existing.isEmpty) {
+          await txn.insert('calendar_events', evt.toMap());
+          eventsAdded++;
+        }
+      }
+
+      // 4. Academic Milestones (Insert missing milestones)
+      for (final ms in result.academicMilestones) {
+        final existing = await txn.query('academic_milestones', where: 'id = ?', whereArgs: [ms.id]);
+        if (existing.isEmpty) {
+          await txn.insert('academic_milestones', ms.toMap());
+          milestonesAdded++;
+        }
+      }
+
+      // 5. Ensure weekly_periods record exists
+      final pRows = await txn.query('weekly_periods', where: 'id = ?', whereArgs: [currentWeekId]);
+      if (pRows.isEmpty) {
+        final weekInfo = FlutterTimeEngine.getWeekPeriod();
+        await txn.insert('weekly_periods', {
+          'id': currentWeekId,
+          'start_date': weekInfo.start.toIso8601String(),
+          'end_date': weekInfo.end.toIso8601String(),
+          'created_at': now.toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+
+      // 6. Ensure weekly_budgets for all active categories
+      final allCats = await txn.query('categories', where: 'is_archived = 0');
+      for (final catRow in allCats) {
+        final catId = catRow['id'] as String;
+        final targetMins = catRow['weekly_target_minutes'] as int? ?? 60;
+        final bRows = await txn.query(
+          'weekly_budgets',
+          where: 'category_id = ? AND week_period_id = ?',
+          whereArgs: [catId, currentWeekId],
+        );
+        if (bRows.isEmpty) {
+          await txn.insert('weekly_budgets', {
+            'id': '${catId}_$currentWeekId',
+            'category_id': catId,
+            'week_period_id': currentWeekId,
+            'allocated_minutes': targetMins,
+            'transferred_in_minutes': 0,
+            'transferred_out_minutes': 0,
+            'is_completed': 0,
+            'created_at': now.toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+          budgetsEnsured++;
+        }
+      }
+
+      // 7. Update seed version
+      await txn.update(
+        'settings',
+        {'seed_version': result.version},
+        where: 'id = ?',
+        whereArgs: ['app_settings'],
+      );
+    });
+
+    final msg = 'Onarım tamamlandı: $catsAdded kategori eklendi, $tasksAdded görev eklendi, '
+        '$eventsAdded takvim etkinliği, $milestonesAdded akademik tarih yüklendi, $budgetsEnsured bütçe oluşturuldu.';
+    return SeedRepairReport(
+      categoriesAdded: catsAdded,
+      tasksAdded: tasksAdded,
+      eventsAdded: eventsAdded,
+      milestonesAdded: milestonesAdded,
+      budgetsEnsured: budgetsEnsured,
+      cleanedFallback: cleanedFallback,
+      message: msg,
+    );
   }
 
   // --- CATEGORIES ---

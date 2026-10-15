@@ -124,5 +124,6 @@
       "recurrence": "weekly"
     }
   ],
-  "calendarEvents": []
+  "calendarEvents": [],
+  "academicMilestones": []
 }
