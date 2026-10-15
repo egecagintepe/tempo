@@ -18,14 +18,14 @@ if (-not (Test-Path ".local/personal_profile.json")) {
 Write-Host "Step 2/5: Staging private personal seed asset..." -ForegroundColor Yellow
 Copy-Item ".local/personal_profile.json" -Destination "assets/seed.json" -Force
 
-# 3. Flutter Pub Get
-Write-Host "Step 3/5: Resolving dependencies..." -ForegroundColor Yellow
-& $flutter pub get
-
-# 4. Build Personal APK
-Write-Host "Step 4/5: Deriving release APK (Flavor: personal)..." -ForegroundColor Yellow
 $buildSuccess = $false
 try {
+    # 3. Flutter Pub Get
+    Write-Host "Step 3/5: Resolving dependencies..." -ForegroundColor Yellow
+    & $flutter pub get
+
+    # 4. Build Personal APK
+    Write-Host "Step 4/5: Deriving release APK (Flavor: personal)..." -ForegroundColor Yellow
     & $flutter build apk --flavor personal -t lib/main.dart --release
     $buildSuccess = ($LASTEXITCODE -eq 0)
 } finally {

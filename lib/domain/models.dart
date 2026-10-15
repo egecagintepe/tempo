@@ -673,3 +673,78 @@ class AppSettingsModel {
     );
   }
 }
+
+class ActiveSessionRecord {
+  final String id;
+  final String categoryId;
+  final String? taskId;
+  final SessionState state;
+  final DateTime sessionStartTime;
+  final DateTime lastSegmentStartTime;
+  final int accumulatedWorkSeconds;
+  final int accumulatedBreakSeconds;
+  final int plannedBreakMinutes;
+  final String focusCycle;
+  final String? note;
+  final String weekPeriodId;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const ActiveSessionRecord({
+    this.id = 'current',
+    required this.categoryId,
+    this.taskId,
+    required this.state,
+    required this.sessionStartTime,
+    required this.lastSegmentStartTime,
+    this.accumulatedWorkSeconds = 0,
+    this.accumulatedBreakSeconds = 0,
+    this.plannedBreakMinutes = 5,
+    this.focusCycle = 'continuous',
+    this.note,
+    required this.weekPeriodId,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'category_id': categoryId,
+      'task_id': taskId,
+      'state': state.name,
+      'session_start_time': sessionStartTime.toIso8601String(),
+      'last_segment_start_time': lastSegmentStartTime.toIso8601String(),
+      'accumulated_work_seconds': accumulatedWorkSeconds,
+      'accumulated_break_seconds': accumulatedBreakSeconds,
+      'planned_break_minutes': plannedBreakMinutes,
+      'focus_cycle': focusCycle,
+      'note': note,
+      'week_period_id': weekPeriodId,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+    };
+  }
+
+  factory ActiveSessionRecord.fromMap(Map<String, dynamic> map) {
+    return ActiveSessionRecord(
+      id: (map['id'] as String?) ?? 'current',
+      categoryId: map['category_id'] as String,
+      taskId: map['task_id'] as String?,
+      state: SessionState.values.firstWhere(
+        (s) => s.name == map['state'],
+        orElse: () => SessionState.running,
+      ),
+      sessionStartTime: DateTime.tryParse((map['session_start_time'] as String?) ?? '') ?? DateTime.now(),
+      lastSegmentStartTime: DateTime.tryParse((map['last_segment_start_time'] as String?) ?? '') ?? DateTime.now(),
+      accumulatedWorkSeconds: (map['accumulated_work_seconds'] as num?)?.toInt() ?? 0,
+      accumulatedBreakSeconds: (map['accumulated_break_seconds'] as num?)?.toInt() ?? 0,
+      plannedBreakMinutes: (map['planned_break_minutes'] as num?)?.toInt() ?? 5,
+      focusCycle: (map['focus_cycle'] as String?) ?? 'continuous',
+      note: map['note'] as String?,
+      weekPeriodId: (map['week_period_id'] as String?) ?? '',
+      createdAt: DateTime.tryParse((map['created_at'] as String?) ?? '') ?? DateTime.now(),
+      updatedAt: DateTime.tryParse((map['updated_at'] as String?) ?? '') ?? DateTime.now(),
+    );
+  }
+}

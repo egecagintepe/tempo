@@ -290,13 +290,16 @@ class _FocusTimerModalState extends ConsumerState<FocusTimerModal> {
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                     ),
-                    onPressed: () {
-                      final ok = ref.read(activeSessionNotifierProvider.notifier).startSession(
+                    onPressed: () async {
+                      final res = await ref.read(activeSessionNotifierProvider.notifier).startSession(
                         categoryId: widget.category.id,
                       );
-                      if (!ok) {
+                      if (!res.isAllowed && context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Zaten aktif bir oturum var!')),
+                          SnackBar(
+                            backgroundColor: const Color(0xFFF43F5E),
+                            content: Text(res.blockReason ?? 'Oturum başlatılamadı!'),
+                          ),
                         );
                       }
                     },

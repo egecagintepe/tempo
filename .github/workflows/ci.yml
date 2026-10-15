@@ -15,20 +15,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Privacy Guard Check
-        run: |
-          echo "Scanning for accidental leaks of private entities..."
-          FORBIDDEN="anizon novzon ankaref auscultaforge eee433 eee303"
-          FOUND=0
-          for word in $FORBIDDEN; do
-            if grep -riI "$word" lib/ config/seeds/public.json README.md archive/ ; then
-              echo "::error::Found forbidden keyword '$word' in public repository!"
-              FOUND=1
-            fi
-          done
-          if [ $FOUND -eq 1 ]; then
-            exit 1
-          fi
-          echo "Privacy guard check passed: 0 private references found."
+        run: pwsh scripts/verify_privacy.ps1
 
       - name: Setup Java
         uses: actions/setup-java@v4

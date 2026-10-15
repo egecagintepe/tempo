@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import '../domain/models.dart';
+import '../domain/time_engine.dart';
 
 class TempoDatabase {
   static final TempoDatabase instance = TempoDatabase._internal();
@@ -22,8 +23,31 @@ class TempoDatabase {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS active_session (
+              id TEXT PRIMARY KEY DEFAULT 'current',
+              category_id TEXT NOT NULL,
+              task_id TEXT,
+              state TEXT NOT NULL,
+              session_start_time TEXT NOT NULL,
+              last_segment_start_time TEXT NOT NULL,
+              accumulated_work_seconds INTEGER NOT NULL DEFAULT 0,
+              accumulated_break_seconds INTEGER NOT NULL DEFAULT 0,
+              planned_break_minutes INTEGER NOT NULL DEFAULT 5,
+              focus_cycle TEXT NOT NULL DEFAULT 'continuous',
+              note TEXT,
+              week_period_id TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE
+            );
+          ''');
+        }
+      },
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -233,6 +257,26 @@ class TempoDatabase {
       'language': 'tr',
       'seed_version': 0,
     });
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS active_session (
+        id TEXT PRIMARY KEY DEFAULT 'current',
+        category_id TEXT NOT NULL,
+        task_id TEXT,
+        state TEXT NOT NULL,
+        session_start_time TEXT NOT NULL,
+        last_segment_start_time TEXT NOT NULL,
+        accumulated_work_seconds INTEGER NOT NULL DEFAULT 0,
+        accumulated_break_seconds INTEGER NOT NULL DEFAULT 0,
+        planned_break_minutes INTEGER NOT NULL DEFAULT 5,
+        focus_cycle TEXT NOT NULL DEFAULT 'continuous',
+        note TEXT,
+        week_period_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE
+      );
+    ''');
   }
 
   // --- SEED INITIALIZATION (Idempotent) ---
@@ -370,24 +414,140 @@ class TempoDatabase {
   }
 
   // --- TASKS ---
-  Future<List<TaskModel>> getTasks({String? categoryId, String? weekPeriodId}) async {
+  Future<List<TaskModel>> getTasks({String? categoryId, required String weekPeriodId}) async {
     final db = await database;
-    String? where;
-    List<dynamic>? whereArgs;
+    String where = 'week_period_id = ?';
+    List<dynamic> whereArgs = [weekPeriodId];
 
-    if (categoryId != null && weekPeriodId != null) {
-      where = 'category_id = ? AND (week_period_id = ? OR recurrence != "once")';
-      whereArgs = [categoryId, weekPeriodId];
-    } else if (categoryId != null) {
-      where = 'category_id = ?';
-      whereArgs = [categoryId];
-    } else if (weekPeriodId != null) {
-      where = 'week_period_id = ? OR recurrence != "once"';
-      whereArgs = [weekPeriodId];
+    if (categoryId != null) {
+      where += ' AND category_id = ?';
+      whereArgs.add(categoryId);
     }
 
     final rows = await db.query('tasks', where: where, whereArgs: whereArgs, orderBy: 'created_at ASC');
     return rows.map((r) => TaskModel.fromMap(r)).toList();
+  }
+
+  Future<void> ensureWeekRollover(String currentWeekPeriodId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      // 1. Ensure weekly_periods record exists
+      final pRows = await txn.query('weekly_periods', where: 'id = ?', whereArgs: [currentWeekPeriodId]);
+      if (pRows.isEmpty) {
+        final weekInfo = FlutterTimeEngine.getWeekPeriod();
+        await txn.insert('weekly_periods', {
+          'id': currentWeekPeriodId,
+          'start_date': weekInfo.start.toIso8601String(),
+          'end_date': weekInfo.end.toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+
+      // 2. Ensure weekly_budgets for all active categories
+      final catRows = await txn.query('categories', where: 'is_archived = 0');
+      for (final cat in catRows) {
+        final catId = cat['id'] as String;
+        final targetMins = cat['weekly_target_minutes'] as int;
+        final bRows = await txn.query(
+          'weekly_budgets',
+          where: 'category_id = ? AND week_period_id = ?',
+          whereArgs: [catId, currentWeekPeriodId],
+        );
+        if (bRows.isEmpty) {
+          await txn.insert('weekly_budgets', {
+            'id': '${catId}_$currentWeekPeriodId',
+            'category_id': catId,
+            'week_period_id': currentWeekPeriodId,
+            'allocated_minutes': targetMins,
+            'transferred_in_minutes': 0,
+            'transferred_out_minutes': 0,
+            'is_completed': 0,
+            'created_at': DateTime.now().toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+
+      // 3. Materialize recurring tasks into current week with status = todo
+      final recurringTaskRows = await txn.query(
+        'tasks',
+        where: 'recurrence != ? AND week_period_id != ?',
+        whereArgs: ['once', currentWeekPeriodId],
+      );
+
+      for (final rRow in recurringTaskRows) {
+        final catId = rRow['category_id'] as String;
+        final title = rRow['title'] as String;
+
+        final existing = await txn.query(
+          'tasks',
+          where: 'category_id = ? AND week_period_id = ? AND title = ?',
+          whereArgs: [catId, currentWeekPeriodId, title],
+        );
+
+        if (existing.isEmpty) {
+          final newId = '${rRow['id']}_$currentWeekPeriodId';
+          await txn.insert('tasks', {
+            'id': newId,
+            'category_id': catId,
+            'title': title,
+            'description': rRow['description'],
+            'estimated_minutes': rRow['estimated_minutes'],
+            'actual_tracked_minutes': 0,
+            'priority': rRow['priority'],
+            'status': 'todo',
+            'deadline': rRow['deadline'],
+            'week_period_id': currentWeekPeriodId,
+            'recurrence': rRow['recurrence'],
+            'created_at': DateTime.now().toIso8601String(),
+            'updated_at': DateTime.now().toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+    });
+  }
+
+  // --- ACTIVE SESSIONS (Persistent Crash Recovery) ---
+  Future<void> saveActiveSession(ActiveSessionRecord record) async {
+    final db = await database;
+    await db.insert(
+      'active_session',
+      record.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<ActiveSessionRecord?> getActiveSession() async {
+    final db = await database;
+    final rows = await db.query(
+      'active_session',
+      where: 'id = ?',
+      whereArgs: ['current'],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return ActiveSessionRecord.fromMap(rows.first);
+  }
+
+  Future<void> clearActiveSession() async {
+    final db = await database;
+    await db.delete('active_session', where: 'id = ?', whereArgs: ['current']);
+  }
+
+  Future<void> completeActiveSessionTransaction(WorkSessionModel session) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert('sessions', session.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+
+      if (session.taskId != null && session.taskId!.isNotEmpty && session.activeSeconds > 0) {
+        final taskMins = (session.activeSeconds / 60).round();
+        await txn.rawUpdate(
+          'UPDATE tasks SET actual_tracked_minutes = actual_tracked_minutes + ?, updated_at = ? WHERE id = ?',
+          [taskMins, DateTime.now().toIso8601String(), session.taskId],
+        );
+      }
+
+      await txn.delete('active_session', where: 'id = ?', whereArgs: ['current']);
+    });
   }
 
   Future<void> insertTask(TaskModel task) async {

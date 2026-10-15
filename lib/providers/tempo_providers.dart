@@ -106,6 +106,7 @@ class TasksNotifier extends StateNotifier<List<TaskModel>> {
   }
 
   Future<void> loadTasks() async {
+    await _db.ensureWeekRollover(_weekPeriodId);
     final list = await _db.getTasks(weekPeriodId: _weekPeriodId);
     state = list;
   }
@@ -295,19 +296,147 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSessionState> {
   final Ref _ref;
   Timer? _ticker;
 
-  ActiveSessionNotifier(this._ref) : super(const ActiveSessionState());
+  ActiveSessionNotifier(this._ref) : super(const ActiveSessionState()) {
+    _recoverActiveSession();
+  }
+
+  Future<void> _recoverActiveSession() async {
+    final db = _ref.read(databaseProvider);
+    final rec = await db.getActiveSession();
+    if (rec == null) return;
+
+    final now = DateTime.now();
+    final categories = await db.getAllCategories();
+    final cat = categories.firstWhere(
+      (c) => c.id == rec.categoryId,
+      orElse: () => CategoryModel(
+        id: rec.categoryId,
+        name: 'Oturum',
+        description: '',
+        icon: 'circle',
+        colorValue: 0xFF2563EB,
+        weeklyTargetMinutes: 60,
+        policy: BudgetPolicy.flexible,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    int recoveredWorkSecs = rec.accumulatedWorkSeconds;
+    int recoveredBreakSecs = rec.accumulatedBreakSeconds;
+    SessionState recoveredState = rec.state;
+    DateTime recoveredSegmentStart = rec.lastSegmentStartTime;
+
+    if (rec.state == SessionState.running) {
+      final elapsed = now.difference(rec.lastSegmentStartTime).inSeconds;
+      if (cat.policy == BudgetPolicy.strict) {
+        final sessions = await db.getSessionsForWeek(rec.weekPeriodId);
+        final txs = await db.getTransactionsForWeek(rec.weekPeriodId);
+        final totals = FlutterTimeEngine.calculateTotals(
+          category: cat,
+          sessions: sessions,
+          transactions: txs,
+          weekPeriodId: rec.weekPeriodId,
+        );
+
+        final availableSecs = (totals.remainingSeconds - rec.accumulatedWorkSeconds).clamp(0, 86400 * 7);
+        if (elapsed >= availableSecs) {
+          // Strict budget was exhausted while app was away: clamp and auto-pause
+          recoveredWorkSecs += availableSecs;
+          recoveredState = SessionState.paused;
+          recoveredSegmentStart = now;
+        } else {
+          recoveredWorkSecs += elapsed;
+          recoveredSegmentStart = now;
+        }
+      } else {
+        recoveredWorkSecs += elapsed;
+        recoveredSegmentStart = now;
+      }
+    } else if (rec.state == SessionState.onBreak) {
+      final elapsedBreak = now.difference(rec.lastSegmentStartTime).inSeconds;
+      recoveredBreakSecs += elapsedBreak;
+      recoveredSegmentStart = now;
+    }
+
+    state = ActiveSessionState(
+      isActive: true,
+      categoryId: rec.categoryId,
+      taskId: rec.taskId,
+      state: recoveredState,
+      sessionStartTime: rec.sessionStartTime,
+      lastSegmentStartTime: recoveredSegmentStart,
+      accumulatedWorkSeconds: recoveredWorkSecs,
+      accumulatedBreakSeconds: recoveredBreakSecs,
+      plannedBreakMinutes: rec.plannedBreakMinutes,
+      focusCycle: rec.focusCycle,
+      note: rec.note,
+    );
+
+    // Update SQLite with the recovered state
+    await db.saveActiveSession(ActiveSessionRecord(
+      categoryId: rec.categoryId,
+      taskId: rec.taskId,
+      state: recoveredState,
+      sessionStartTime: rec.sessionStartTime,
+      lastSegmentStartTime: recoveredSegmentStart,
+      accumulatedWorkSeconds: recoveredWorkSecs,
+      accumulatedBreakSeconds: recoveredBreakSecs,
+      plannedBreakMinutes: rec.plannedBreakMinutes,
+      focusCycle: rec.focusCycle,
+      note: rec.note,
+      weekPeriodId: rec.weekPeriodId,
+      createdAt: rec.createdAt,
+      updatedAt: now,
+    ));
+
+    if (recoveredState == SessionState.running || recoveredState == SessionState.onBreak) {
+      _startTicker();
+    }
+  }
 
   void _startTicker() {
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (state.isActive) {
-        state = state.copyWith(); // triggers UI rebuild with wall-clock calculation
+      if (!state.isActive) return;
 
-        // Check if break has completed
-        if (state.state == SessionState.onBreak && state.currentBreakRemainingSeconds <= 0) {
-          NotificationService.instance.showBreakCompletedNotification();
+      if (state.state == SessionState.running && state.categoryId != null) {
+        final categories = _ref.read(categoriesNotifierProvider);
+        final cat = categories.firstWhere(
+          (c) => c.id == state.categoryId,
+          orElse: () => CategoryModel(
+            id: state.categoryId!,
+            name: 'Oturum',
+            description: '',
+            icon: 'circle',
+            colorValue: 0xFF2563EB,
+            weeklyTargetMinutes: 60,
+            policy: BudgetPolicy.flexible,
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+          ),
+        );
+
+        if (cat.policy == BudgetPolicy.strict) {
+          final totals = _ref.read(categoryTotalsMapProvider)[cat.id];
+          if (totals != null) {
+            if (totals.remainingSeconds <= 0 && state.currentWorkSeconds > 0) {
+              pauseSession();
+              NotificationService.instance.showTimerCompletedNotification(
+                categoryName: cat.name,
+                durationText: FlutterTimeEngine.formatMinutes((totals.effectiveTargetSeconds / 60).round()),
+              );
+              return;
+            }
+          }
         }
       }
+
+      if (state.state == SessionState.onBreak && state.currentBreakRemainingSeconds <= 0) {
+        NotificationService.instance.showBreakCompletedNotification();
+      }
+
+      state = state.copyWith();
     });
   }
 
@@ -316,18 +445,58 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSessionState> {
     _ticker = null;
   }
 
-  bool startSession({
+  Future<SessionPermissionResult> startSession({
     required String categoryId,
     String? taskId,
     String focusCycle = 'continuous',
     String? note,
-  }) {
-    // Only one active session at a time
+  }) async {
     if (state.isActive) {
-      return false;
+      return const SessionPermissionResult(
+        isAllowed: false,
+        blockReason: 'Zaten aktif bir odak oturumu devam ediyor.',
+      );
+    }
+
+    final categories = _ref.read(categoriesNotifierProvider);
+    final cat = categories.firstWhere(
+      (c) => c.id == categoryId,
+      orElse: () => CategoryModel(
+        id: categoryId,
+        name: 'Oturum',
+        description: '',
+        icon: 'circle',
+        colorValue: 0xFF2563EB,
+        weeklyTargetMinutes: 60,
+        policy: BudgetPolicy.flexible,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      ),
+    );
+
+    final week = _ref.read(currentWeekPeriodProvider);
+    final sessions = _ref.read(sessionsNotifierProvider);
+    final transactions = _ref.read(transactionsNotifierProvider);
+
+    final totals = FlutterTimeEngine.calculateTotals(
+      category: cat,
+      sessions: sessions,
+      transactions: transactions,
+      weekPeriodId: week.id,
+    );
+
+    final permission = FlutterTimeEngine.canStartSession(
+      category: cat,
+      totals: totals,
+    );
+
+    if (!permission.isAllowed) {
+      return permission;
     }
 
     final now = DateTime.now();
+    final db = _ref.read(databaseProvider);
+
     state = ActiveSessionState(
       isActive: true,
       categoryId: categoryId,
@@ -341,30 +510,75 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSessionState> {
       note: note,
     );
 
+    await db.saveActiveSession(ActiveSessionRecord(
+      categoryId: categoryId,
+      taskId: taskId,
+      state: SessionState.running,
+      sessionStartTime: now,
+      lastSegmentStartTime: now,
+      accumulatedWorkSeconds: 0,
+      accumulatedBreakSeconds: 0,
+      plannedBreakMinutes: 5,
+      focusCycle: focusCycle,
+      note: note,
+      weekPeriodId: week.id,
+      createdAt: now,
+      updatedAt: now,
+    ));
+
+    if (cat.policy == BudgetPolicy.strict && totals.remainingSeconds > 0) {
+      await NotificationService.instance.scheduleTimerCompletedNotification(
+        categoryName: cat.name,
+        scheduledDate: now.add(Duration(seconds: totals.remainingSeconds)),
+      );
+    }
+
     _startTicker();
-    return true;
+    return const SessionPermissionResult(isAllowed: true);
   }
 
-  void pauseSession() {
+  Future<void> pauseSession() async {
     if (!state.isActive || state.state != SessionState.running) return;
 
     final now = DateTime.now();
     final elapsed = now.difference(state.lastSegmentStartTime!).inSeconds;
+    final totalWork = state.accumulatedWorkSeconds + elapsed;
 
     state = state.copyWith(
       state: SessionState.paused,
-      accumulatedWorkSeconds: state.accumulatedWorkSeconds + elapsed,
+      accumulatedWorkSeconds: totalWork,
       lastSegmentStartTime: now,
     );
+
+    final db = _ref.read(databaseProvider);
+    final week = _ref.read(currentWeekPeriodProvider);
+
+    await db.saveActiveSession(ActiveSessionRecord(
+      categoryId: state.categoryId!,
+      taskId: state.taskId,
+      state: SessionState.paused,
+      sessionStartTime: state.sessionStartTime ?? now,
+      lastSegmentStartTime: now,
+      accumulatedWorkSeconds: totalWork,
+      accumulatedBreakSeconds: state.accumulatedBreakSeconds,
+      plannedBreakMinutes: state.plannedBreakMinutes,
+      focusCycle: state.focusCycle,
+      note: state.note,
+      weekPeriodId: week.id,
+      createdAt: state.sessionStartTime ?? now,
+      updatedAt: now,
+    ));
+
+    await NotificationService.instance.cancelScheduledTimerNotifications();
   }
 
-  void resumeSession() {
+  Future<void> resumeSession() async {
     if (!state.isActive || state.state == SessionState.running) return;
 
     final now = DateTime.now();
     int newBreakAccum = state.accumulatedBreakSeconds;
 
-    if (state.state == SessionState.onBreak) {
+    if (state.state == SessionState.onBreak && state.lastSegmentStartTime != null) {
       final elapsedBreak = now.difference(state.lastSegmentStartTime!).inSeconds;
       newBreakAccum += elapsedBreak;
     }
@@ -374,15 +588,53 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSessionState> {
       accumulatedBreakSeconds: newBreakAccum,
       lastSegmentStartTime: now,
     );
+
+    final db = _ref.read(databaseProvider);
+    final week = _ref.read(currentWeekPeriodProvider);
+
+    await db.saveActiveSession(ActiveSessionRecord(
+      categoryId: state.categoryId!,
+      taskId: state.taskId,
+      state: SessionState.running,
+      sessionStartTime: state.sessionStartTime ?? now,
+      lastSegmentStartTime: now,
+      accumulatedWorkSeconds: state.accumulatedWorkSeconds,
+      accumulatedBreakSeconds: newBreakAccum,
+      plannedBreakMinutes: state.plannedBreakMinutes,
+      focusCycle: state.focusCycle,
+      note: state.note,
+      weekPeriodId: week.id,
+      createdAt: state.sessionStartTime ?? now,
+      updatedAt: now,
+    ));
+
+    final categories = _ref.read(categoriesNotifierProvider);
+    final cat = categories.firstWhere(
+      (c) => c.id == state.categoryId,
+      orElse: () => throw Exception('Kategori bulunamadı'),
+    );
+
+    if (cat.policy == BudgetPolicy.strict) {
+      final totals = _ref.read(categoryTotalsMapProvider)[cat.id];
+      if (totals != null) {
+        final availableSecs = totals.remainingSeconds - state.accumulatedWorkSeconds;
+        if (availableSecs > 0) {
+          await NotificationService.instance.scheduleTimerCompletedNotification(
+            categoryName: cat.name,
+            scheduledDate: now.add(Duration(seconds: availableSecs)),
+          );
+        }
+      }
+    }
   }
 
-  void startBreak(int minutes) {
+  Future<void> startBreak(int minutes) async {
     if (!state.isActive) return;
 
     final now = DateTime.now();
     int newWorkAccum = state.accumulatedWorkSeconds;
 
-    if (state.state == SessionState.running) {
+    if (state.state == SessionState.running && state.lastSegmentStartTime != null) {
       newWorkAccum += now.difference(state.lastSegmentStartTime!).inSeconds;
     }
 
@@ -391,6 +643,30 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSessionState> {
       plannedBreakMinutes: minutes,
       accumulatedWorkSeconds: newWorkAccum,
       lastSegmentStartTime: now,
+    );
+
+    final db = _ref.read(databaseProvider);
+    final week = _ref.read(currentWeekPeriodProvider);
+
+    await db.saveActiveSession(ActiveSessionRecord(
+      categoryId: state.categoryId!,
+      taskId: state.taskId,
+      state: SessionState.onBreak,
+      sessionStartTime: state.sessionStartTime ?? now,
+      lastSegmentStartTime: now,
+      accumulatedWorkSeconds: newWorkAccum,
+      accumulatedBreakSeconds: state.accumulatedBreakSeconds,
+      plannedBreakMinutes: minutes,
+      focusCycle: state.focusCycle,
+      note: state.note,
+      weekPeriodId: week.id,
+      createdAt: state.sessionStartTime ?? now,
+      updatedAt: now,
+    ));
+
+    await NotificationService.instance.cancelScheduledTimerNotifications();
+    await NotificationService.instance.scheduleBreakCompletedNotification(
+      scheduledDate: now.add(Duration(minutes: minutes)),
     );
   }
 
@@ -418,25 +694,6 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSessionState> {
     final categoryId = state.categoryId!;
     final taskId = state.taskId;
 
-    final session = WorkSessionModel(
-      id: const Uuid().v4(),
-      categoryId: categoryId,
-      taskId: taskId,
-      startTime: state.sessionStartTime ?? now,
-      endTime: now,
-      state: SessionState.completed,
-      activeSeconds: totalWork,
-      breakSeconds: totalBreak,
-      note: state.note,
-      weekPeriodId: week.id,
-      createdAt: state.sessionStartTime ?? now,
-      updatedAt: now,
-    );
-
-    // Save to Database
-    await _ref.read(sessionsNotifierProvider.notifier).addSession(session);
-
-    // Categories lookup for notification
     final categories = _ref.read(categoriesNotifierProvider);
     final cat = categories.firstWhere(
       (c) => c.id == categoryId,
@@ -453,17 +710,55 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSessionState> {
       ),
     );
 
+    if (cat.policy == BudgetPolicy.strict) {
+      final totals = _ref.read(categoryTotalsMapProvider)[categoryId];
+      if (totals != null) {
+        final maxSecs = totals.remainingSeconds;
+        if (totalWork > maxSecs && maxSecs > 0) {
+          totalWork = maxSecs;
+        }
+      }
+    }
+
+    final session = WorkSessionModel(
+      id: const Uuid().v4(),
+      categoryId: categoryId,
+      taskId: taskId,
+      startTime: state.sessionStartTime ?? now,
+      endTime: now,
+      state: SessionState.completed,
+      activeSeconds: totalWork,
+      breakSeconds: totalBreak,
+      note: state.note,
+      weekPeriodId: week.id,
+      createdAt: state.sessionStartTime ?? now,
+      updatedAt: now,
+    );
+
+    final db = _ref.read(databaseProvider);
+    await db.completeActiveSessionTransaction(session);
+
+    await _ref.read(sessionsNotifierProvider.notifier).loadSessions();
+    if (taskId != null) {
+      await _ref.read(tasksNotifierProvider.notifier).loadTasks();
+    }
+
+    await NotificationService.instance.cancelScheduledTimerNotifications();
+
     NotificationService.instance.showTimerCompletedNotification(
       categoryName: cat.name,
       durationText: FlutterTimeEngine.formatMinutes((totalWork / 60).round()),
     );
 
-    cancelSession();
+    await cancelSession();
     return session;
   }
 
-  void cancelSession() {
+  Future<void> cancelSession() async {
     _stopTicker();
+    final db = _ref.read(databaseProvider);
+    await db.clearActiveSession();
+    await NotificationService.instance.cancelScheduledTimerNotifications();
     state = const ActiveSessionState();
   }
 
