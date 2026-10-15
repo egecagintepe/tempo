@@ -1,0 +1,58 @@
+name: TEMPO CI & Privacy Guard
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate-and-build:
+    name: Lint, Test, Privacy Guard & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Privacy Guard Check
+        run: |
+          echo "Scanning for accidental leaks of private entities..."
+          FORBIDDEN="anizon novzon ankaref auscultaforge eee433 eee303"
+          FOUND=0
+          for word in $FORBIDDEN; do
+            if grep -riI "$word" lib/ config/seeds/public.json README.md archive/ ; then
+              echo "::error::Found forbidden keyword '$word' in public repository!"
+              FOUND=1
+            fi
+          done
+          if [ $FOUND -eq 1 ]; then
+            exit 1
+          fi
+          echo "Privacy guard check passed: 0 private references found."
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Analyze Code
+        run: flutter analyze
+
+      - name: Run Unit Tests
+        run: flutter test
+
+      - name: Build Public Release APK
+        run: |
+          cp config/seeds/public.json assets/seed.json
+          flutter build apk --flavor public -t lib/main.dart --release
